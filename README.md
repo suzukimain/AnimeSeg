@@ -11,7 +11,7 @@ Anime Character Segmentation using DINOv2 + U-Net++ with LoRA fine-tuning.
 ## Installation
 
 ```bash
-pip install -e .
+pip install anime_seg
 ```
 
 ## Usage

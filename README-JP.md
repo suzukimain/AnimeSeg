@@ -11,8 +11,8 @@
 
 ### 1. インストール
 
-```bash
-pip install -e .
+```python
+pip install anime_seg
 ```
 
 ### 2. 基本的な使用

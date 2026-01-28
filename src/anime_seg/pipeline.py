@@ -1,6 +1,4 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 from huggingface_hub import list_repo_files, hf_hub_download, PyTorchModelHubMixin
@@ -8,6 +6,7 @@ import re
 import os
 from typing import Union, Optional
 from safetensors.torch import load_file
+from .model import create_model # Import from local model.py which has DINOv2ForSegmentation and UNetPlusPlusDecoder
 
 import warnings
 
@@ -24,100 +23,6 @@ try:
 except ImportError:
     PEFT_AVAILABLE = False
 
-
-class SimpleDecoder(nn.Module):
-    """Minimal decoder: reshape hidden states + conv + resize."""
-
-    def __init__(self, embed_dim: int, num_classes: int, decoder_channels: int = 256):
-        super().__init__()
-        self.project = nn.Sequential(
-            nn.Conv2d(embed_dim, decoder_channels, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(decoder_channels, decoder_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(decoder_channels, num_classes, kernel_size=1),
-        )
-
-    def forward(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
-        B, N, C = last_hidden_state.shape
-        x = last_hidden_state[:, 1:, :]
-        spatial_dim = int((N - 1) ** 0.5)
-        x = x.transpose(1, 2).reshape(B, C, spatial_dim, spatial_dim)
-        x = self.project(x)
-        return F.interpolate(x, size=(512, 512), mode='bilinear', align_corners=False)
-
-
-class DINOv2ForSegmentation(nn.Module):
-    """Simplified DINOv2 segmentation model."""
-
-    def __init__(
-        self,
-        num_classes: int,
-        model_name: str = "facebook/dinov2-base",
-        use_lora: bool = True,
-        lora_r: int = 8,
-        lora_alpha: int = 16,
-        lora_dropout: float = 0.0,
-        freeze_backbone: bool = True,
-        decoder_channels: int = 256,
-    ):
-        super().__init__()
-
-        if not HF_AVAILABLE:
-            raise ImportError("transformers not installed")
-
-        self.use_lora = use_lora
-        self.backbone = AutoModel.from_pretrained(model_name, output_hidden_states=True)
-        embed_dim = self.backbone.config.hidden_size
-
-        if use_lora and PEFT_AVAILABLE:
-            lora_config = LoraConfig(
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                target_modules=['q_proj', 'v_proj'],
-                lora_dropout=lora_dropout,
-                bias='none',
-                task_type=TaskType.FEATURE_EXTRACTION,
-            )
-            self.backbone = get_peft_model(self.backbone, lora_config)
-
-        if freeze_backbone:
-            for name, param in self.backbone.named_parameters():
-                if 'lora' not in name.lower():
-                    param.requires_grad = False
-
-        self.decoder = SimpleDecoder(embed_dim, num_classes, decoder_channels)
-
-    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        outputs = self.backbone(pixel_values=pixel_values, output_hidden_states=True)
-        last_hidden_state = outputs.hidden_states[-1]
-        return self.decoder(last_hidden_state)
-
-
-def create_model(
-    num_classes: int,
-    model_size: str = "base",
-    use_lora: bool = True,
-    lora_r: int = 8,
-    lora_alpha: int = 16,
-    freeze_backbone: bool = True,
-    decoder_channels: int = 256,
-) -> DINOv2ForSegmentation:
-    model_names = {
-        "small": "facebook/dinov2-small",
-        "base": "facebook/dinov2-base",
-        "large": "facebook/dinov2-large",
-        "giant": "facebook/dinov2-giant",
-    }
-    return DINOv2ForSegmentation(
-        num_classes=num_classes,
-        model_name=model_names.get(model_size, model_names['base']),
-        use_lora=use_lora,
-        lora_r=lora_r,
-        lora_alpha=lora_alpha,
-        freeze_backbone=freeze_backbone,
-        decoder_channels=decoder_channels,
-    )
 
 # RGB color definitions for each segmentation class
 # hair_thin is rendered with darkened red, unknown is dark gray
@@ -185,11 +90,15 @@ class AnimeSegPipeline(PyTorchModelHubMixin):
         self.num_classes = NUM_CLASSES
         
         # Auto-detect filename if not provided
-        if not filename:
-            filename = self._auto_detect_latest_model(repo_id, token)
+        if filename and os.path.isfile(filename):
+            checkpoint_path = filename
+            print(f"Loading from local file: {checkpoint_path}")
+        else:
+            if not filename:
+                filename = self._auto_detect_latest_model(repo_id, token)
             
-        print(f"Downloading model: {repo_id}/{filename}")
-        checkpoint_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
+            print(f"Downloading model: {repo_id}/{filename}")
+            checkpoint_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
         
         # Extract model size from filename (e.g., "anime_seg_dinov2_large_v1.safetensors" -> "large")
         model_size = self._parse_model_size(filename)
@@ -206,13 +115,19 @@ class AnimeSegPipeline(PyTorchModelHubMixin):
         )
         
         # Load weights (strict=False for LoRA weights)
-        print("Loading weights...")
+        print(f"Loading weights from {checkpoint_path}...")
         state_dict = load_file(checkpoint_path)
         
         # Clean state dict keys
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
         
-        self.model.load_state_dict(state_dict, strict=False)
+        missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+        
+        if len(missing) > 0:
+            print(f"Missing keys (likely backbone): {len(missing)}")
+        if len(unexpected) > 0:
+            print(f"Unexpected keys: {len(unexpected)}")
+        
         self.model.to(self.device)
         self.model.eval()
         print("✓ Model ready")
@@ -304,4 +219,3 @@ class AnimeSegPipeline(PyTorchModelHubMixin):
         mask_img = Image.fromarray(colored).resize(original_size, Image.NEAREST)
         
         return mask_img
-
