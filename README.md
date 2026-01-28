@@ -1,5 +1,11 @@
 # AnimeSeg
 
+<p>
+    <a href="https://github.com/suzukimain/AnimeSeg/releases"><img alt="GitHub release" src="https://img.shields.io/github/release/suzukimain/AnimeSeg.svg"></a>
+    <img src="https://visitor-badge.laobi.icu/badge?page_id=suzukimain.AnimeSeg" alt="Visitor Badge">
+</p>
+
+
 Anime Character Segmentation using DINOv2 + U-Net++ with LoRA fine-tuning.
 
 ## Installation
