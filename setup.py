@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="anime_seg",
-    version="0.0.0",
+    version="0.0.3",
     description="Anime Character Segmentation with DINOv2",
     long_description=open("README.md").read() if open("README.md").read() else "",
     long_description_content_type="text/markdown",
