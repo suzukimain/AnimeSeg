@@ -8,8 +8,48 @@ from typing import Union, List, Optional
 import torch.nn.functional as F
 
 from .modeling import create_model
-from .config import NUM_CLASSES, ID_TO_COLOR, CLASS_TO_ID
 from safetensors.torch import load_file
+
+# RGB color definitions for each segmentation class
+# hair_thin is rendered with darkened red, unknown is dark gray
+COLORS = {
+    'background': (0, 0, 0),
+    'hair_main': (255, 0, 0),        # Main hair - bright red
+    'hair_thin': (128, 0, 0),        # Thin hair - dark red
+    'skin': (255, 220, 180),
+    'face': (100, 150, 255),
+    'clothes': (180, 0, 255),
+    'right_eyebrow': (0, 255, 100),
+    'left_eyebrow': (150, 255, 0),
+    'nose': (255, 140, 0),
+    'mouth': (255, 0, 150),
+    'right_eye': (255, 255, 0),
+    'left_eye': (0, 255, 255),
+    'unknown': (64, 64, 64),         # Unknown/ignore - dark gray
+}
+
+# Explicit class ID mapping
+# Order is fixed and must not change during training
+CLASS_TO_ID = {
+    'background': 0,
+    'skin': 1,
+    'face': 2,
+    'hair_main': 3,       # Primary hair (thick)
+    'left_eye': 4,
+    'right_eye': 5,
+    'left_eyebrow': 6,
+    'right_eyebrow': 7,
+    'nose': 8,
+    'mouth': 9,
+    'clothes': 10,
+    'hair_thin': 11,      # Secondary hair (thin lines, ahoges)
+    'unknown': 12,        # Background alternative (for clothes uncertainty)
+}
+ID_TO_CLASS = {v: k for k, v in CLASS_TO_ID.items()}
+
+# Number of classes including background
+NUM_CLASSES = len(CLASS_TO_ID)
+ID_TO_COLOR = {cls_id: COLORS[cls_name] for cls_name, cls_id in CLASS_TO_ID.items()}
 
 class AnimeSegPipeline(PyTorchModelHubMixin):
     """
