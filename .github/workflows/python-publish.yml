@@ -1,0 +1,140 @@
+name: Version Update and Upload Python Package
+
+# Disabled attestations to correct errors on upload.
+# https://github.com/pypa/gh-action-pypi-publish/issues/283
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: 'Branch, tag, or SHA to build/test (default: event ref)'
+        required: false
+        default: ''
+      release_version:
+        description: 'Version to use when manually testing (omit to use current package version)'
+        required: false
+        default: ''
+      publish_to_pypi:
+        description: 'Publish to PyPI (only for manual runs)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  update-version:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+      with:
+        # Use provided ref for manual run, else use the event ref
+        ref: ${{ inputs.target_ref || github.ref }}
+
+    - name: Determine release/base versions
+      id: set_version
+      run: |
+        CURRENT_TAG_VERSION="${GITHUB_REF##refs/tags/v}"
+        INPUT_VERSION="${{ inputs.release_version }}"
+        if [ "${{ github.event_name }}" = "release" ]; then
+          USE_VERSION="$CURRENT_TAG_VERSION"
+        elif [ -n "$INPUT_VERSION" ]; then
+          USE_VERSION="$INPUT_VERSION"
+        else
+          USE_VERSION=$(python -c 'from utils.release import get_version; print(get_version())')
+        fi
+        echo "release_version=$USE_VERSION" >> $GITHUB_ENV
+        echo "base_version=$(python -c 'from utils.release import get_version; print(get_version())')" >> $GITHUB_ENV
+        echo "release_version=$USE_VERSION" >> $GITHUB_OUTPUT
+        echo "base_version=$(python -c 'from utils.release import get_version; print(get_version())')" >> $GITHUB_OUTPUT
+
+    - name: Update version (idempotent)
+      if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
+      run: |
+        # Guard: ensure release_version is set; if not, skip to avoid calling release.py with empty arg
+        if [ -z "${{ env.release_version }}" ]; then
+          echo "release_version is empty; skipping version update.";
+          exit 0
+        fi
+
+        if [ "${{ env.release_version }}" = "${{ env.base_version }}" ]; then
+          echo "Version already ${env.release_version}; skipping bump.";
+        else
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          python utils/release.py --update_version "${{ env.release_version }}"
+          if git diff --quiet; then
+            echo "No changes after version update.";
+          else
+            git add .
+            git commit -m "Update version from ${{ env.base_version }} to ${{ env.release_version }}"
+            # Only push to master/default branch on release event
+            if [ "${{ github.event_name }}" = "release" ]; then
+              git pull --rebase origin $(git rev-parse --abbrev-ref HEAD)
+              git push origin HEAD:master
+            fi
+          fi
+        fi
+        
+  release-build:
+    name: Build / Test / Publish
+    runs-on: ubuntu-22.04
+    needs: update-version
+    
+    environment:
+      name: pypi_release
+      url: https://pypi.org/p/anime_seg
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U setuptools twine build
+          pip install -U torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -U transformers safetensors peft huggingface_hub numpy Pillow
+
+      - name: Build distributions
+        run: |
+          python -m build
+          ls -l dist
+
+      - name: Publish to Test PyPI
+        if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          attestations: false
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+      - name: Test install from built artifacts (wheel)
+        run: |
+          python -c "import glob,sys; print('dist:',glob.glob('dist/*'))" || true
+          pip install --no-cache-dir dist/*.whl
+          python -c "from anime_seg import *" 
+
+      - name: Publish to PyPI
+        if: github.event_name == 'release'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          attestations: false
+          skip-existing: true
