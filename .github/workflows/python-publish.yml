@@ -72,10 +72,10 @@ jobs:
           else
             git add .
             git commit -m "Update version from ${{ env.base_version }} to ${{ env.release_version }}"
-            # Only push to master/default branch on release event
+            # Only push to master/default branch on release event (assuming main)
             if [ "${{ github.event_name }}" = "release" ]; then
-              git pull --rebase origin $(git rev-parse --abbrev-ref HEAD)
-              git push origin HEAD:master
+              git pull --rebase origin main
+              git push origin HEAD:refs/heads/main
             fi
           fi
         fi
