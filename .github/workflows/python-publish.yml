@@ -86,7 +86,7 @@ jobs:
     needs: update-version
     
     environment:
-      name: pypi_release
+      name: pypi-release
       url: https://pypi.org/p/anime_seg
 
     permissions:

@@ -1,14 +1,123 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 from huggingface_hub import list_repo_files, hf_hub_download, PyTorchModelHubMixin
 import re
 import os
-from typing import Union, List, Optional
-import torch.nn.functional as F
-
-from .modeling import create_model
+from typing import Union, Optional
 from safetensors.torch import load_file
+
+import warnings
+
+try:
+    from transformers import AutoModel
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+    warnings.warn("Transformers not installed. Install with: pip install transformers")
+
+try:
+    from peft import LoraConfig, get_peft_model, TaskType
+    PEFT_AVAILABLE = True
+except ImportError:
+    PEFT_AVAILABLE = False
+
+
+class SimpleDecoder(nn.Module):
+    """Minimal decoder: reshape hidden states + conv + resize."""
+
+    def __init__(self, embed_dim: int, num_classes: int, decoder_channels: int = 256):
+        super().__init__()
+        self.project = nn.Sequential(
+            nn.Conv2d(embed_dim, decoder_channels, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(decoder_channels, decoder_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(decoder_channels, num_classes, kernel_size=1),
+        )
+
+    def forward(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
+        B, N, C = last_hidden_state.shape
+        x = last_hidden_state[:, 1:, :]
+        spatial_dim = int((N - 1) ** 0.5)
+        x = x.transpose(1, 2).reshape(B, C, spatial_dim, spatial_dim)
+        x = self.project(x)
+        return F.interpolate(x, size=(512, 512), mode='bilinear', align_corners=False)
+
+
+class DINOv2ForSegmentation(nn.Module):
+    """Simplified DINOv2 segmentation model."""
+
+    def __init__(
+        self,
+        num_classes: int,
+        model_name: str = "facebook/dinov2-base",
+        use_lora: bool = True,
+        lora_r: int = 8,
+        lora_alpha: int = 16,
+        lora_dropout: float = 0.0,
+        freeze_backbone: bool = True,
+        decoder_channels: int = 256,
+    ):
+        super().__init__()
+
+        if not HF_AVAILABLE:
+            raise ImportError("transformers not installed")
+
+        self.use_lora = use_lora
+        self.backbone = AutoModel.from_pretrained(model_name, output_hidden_states=True)
+        embed_dim = self.backbone.config.hidden_size
+
+        if use_lora and PEFT_AVAILABLE:
+            lora_config = LoraConfig(
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                target_modules=['q_proj', 'v_proj'],
+                lora_dropout=lora_dropout,
+                bias='none',
+                task_type=TaskType.FEATURE_EXTRACTION,
+            )
+            self.backbone = get_peft_model(self.backbone, lora_config)
+
+        if freeze_backbone:
+            for name, param in self.backbone.named_parameters():
+                if 'lora' not in name.lower():
+                    param.requires_grad = False
+
+        self.decoder = SimpleDecoder(embed_dim, num_classes, decoder_channels)
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        outputs = self.backbone(pixel_values=pixel_values, output_hidden_states=True)
+        last_hidden_state = outputs.hidden_states[-1]
+        return self.decoder(last_hidden_state)
+
+
+def create_model(
+    num_classes: int,
+    model_size: str = "base",
+    use_lora: bool = True,
+    lora_r: int = 8,
+    lora_alpha: int = 16,
+    freeze_backbone: bool = True,
+    decoder_channels: int = 256,
+) -> DINOv2ForSegmentation:
+    model_names = {
+        "small": "facebook/dinov2-small",
+        "base": "facebook/dinov2-base",
+        "large": "facebook/dinov2-large",
+        "giant": "facebook/dinov2-giant",
+    }
+    return DINOv2ForSegmentation(
+        num_classes=num_classes,
+        model_name=model_names.get(model_size, model_names['base']),
+        use_lora=use_lora,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        freeze_backbone=freeze_backbone,
+        decoder_channels=decoder_channels,
+    )
 
 # RGB color definitions for each segmentation class
 # hair_thin is rendered with darkened red, unknown is dark gray
@@ -53,219 +162,146 @@ ID_TO_COLOR = {cls_id: COLORS[cls_name] for cls_name, cls_id in CLASS_TO_ID.item
 
 class AnimeSegPipeline(PyTorchModelHubMixin):
     """
-    Pipeline for Anime Character Segmentation using DINOv2 + U-Net++.
+    MVP Pipeline for Anime Character Segmentation using DINOv2 + a lightweight decoder.
     
-    Usage:
-        pipe = AnimeSegPipeline() # Loads latest version automatically
-        mask = pipe(image)
+    Minimal Usage:
+        pipe = AnimeSegPipeline()  # Auto-loads latest version from HF
+        mask = pipe(image_path)
         
     Args:
-        repo_id (str): Hugging Face repository ID.
-        model_size (str): Model size ('base', 'large', 'small', 'giant').
-        version (str): Specific version to load (e.g. 'v1'). If None, loads latest.
-        token (str): Hugging Face token.
-        device (str): Device to use ('cuda' or 'cpu').
+        repo_id (str): Hugging Face repository ID. Default: "suzukimain/AnimeSeg"
+        filename (str): Specific model filename. If empty, auto-detects latest version.
+        token (str): Hugging Face token for private repos.
+        device (str): Device ('cuda' or 'cpu'). Auto-detects if None.
     """
     def __init__(
         self, 
-        repo_id: str = "suzukimain/AnimeSeg", 
-        model_size: str = "large", 
-        version: Optional[str] = None, 
-        token: Optional[str] = None, 
-        device: Optional[str] = None,
-        filename: Optional[str] = None
+        repo_id: str = "suzukimain/AnimeSeg",
+        filename: str = "",
+        token: Optional[str] = None,
+        device: Optional[str] = None
     ):
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
-            
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.num_classes = NUM_CLASSES
-        self.model_size = model_size
-        self.patch_size = 14
         
-        # Check if repo_id is actually a local file path
-        if os.path.isfile(repo_id):
-            checkpoint_path = repo_id
-            print(f"Loading weights from local file: {checkpoint_path}")
-        else:
-            # Resolve filename if not provided
-            if not filename:
-                 filename = self._resolve_model_file(repo_id, model_size, version, token)
+        # Auto-detect filename if not provided
+        if not filename:
+            filename = self._auto_detect_latest_model(repo_id, token)
             
-            print(f"Loading AnimeSeg model from {repo_id}/{filename}...")
-            # Download weights
-            checkpoint_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
+        print(f"Downloading model: {repo_id}/{filename}")
+        checkpoint_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
         
-        # Initialize Model
-        # MVP: LoRA is enabled, backbone frozen
+        # Extract model size from filename (e.g., "anime_seg_dinov2_large_v1.safetensors" -> "large")
+        model_size = self._parse_model_size(filename)
+        
+        # Create model with LoRA enabled, backbone frozen (MVP settings)
+        print(f"Initializing {model_size} model...")
         self.model = create_model(
-            num_classes=self.num_classes, 
+            num_classes=self.num_classes,
             model_size=model_size,
             use_lora=True,
             lora_r=8,
             lora_alpha=16,
-            freeze_backbone=True,
-            use_attention=True
+            freeze_backbone=True
         )
         
-        # Load Weights
-        # Use safe_load_file or torch.load depending on extension
-        print(f"Loading weights from {checkpoint_path}...")
-        if checkpoint_path.endswith('.safetensors'):
-            state_dict = load_file(checkpoint_path)
-        else:
-            # Fallback for .pt files
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
-            if 'model_state_dict' in checkpoint:
-                state_dict = checkpoint['model_state_dict']
-            else:
-                state_dict = checkpoint
+        # Load weights (strict=False for LoRA weights)
+        print("Loading weights...")
+        state_dict = load_file(checkpoint_path)
         
-        # Handle state dict keys if needed
-        new_state_dict = {}
-        for k, v in state_dict.items():
-            k = k.replace("_orig_mod.", "")
-            new_state_dict[k] = v
-            
-        # strict=False is important for LoRA/Partial weights
-        self.model.load_state_dict(new_state_dict, strict=False)
+        # Clean state dict keys
+        state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        
+        self.model.load_state_dict(state_dict, strict=False)
         self.model.to(self.device)
         self.model.eval()
-        print("Model loaded successfully.")
-
-    def _resolve_model_file(self, repo_id, model_size, version, token):
-        """Find the latest model file matching the pattern."""
-        print(f"Searching for {model_size} models in {repo_id}...")
+        print("✓ Model ready")
+    
+    def _auto_detect_latest_model(self, repo_id: str, token: Optional[str]) -> str:
+        """Auto-detect latest model file from repo."""
+        print(f"Auto-detecting latest model in {repo_id}...")
         files = list_repo_files(repo_id=repo_id, token=token)
         
-        # Pattern: models/anime_seg_{arch}_{size}_v{ver}.safetensors
-        # Assuming arch is dinov2
-        pattern_str = f"models/anime_seg_dinov2_{model_size}_v(\\d+)\\.safetensors"
-        pattern = re.compile(pattern_str)
+        # Pattern: models/anime_seg_dinov2_{size}_v{version}.safetensors
+        pattern = re.compile(r"models/anime_seg_dinov2_(\w+)_v(\d+)\.safetensors")
         
         candidates = []
         for f in files:
             match = pattern.search(f)
             if match:
-                ver = int(match.group(1))
-                candidates.append((ver, f))
+                size = match.group(1)
+                version = int(match.group(2))
+                candidates.append((version, f))
         
         if not candidates:
-            # Try looser pattern if stricter one fails
-            # Maybe architecture is not in name?
-            # "models/anime_seg_{model_size}_v{version}.safetensors"
-            pattern_str_loose = f"models/anime_seg_.*{model_size}_v(\\d+)\\.safetensors"
-            pattern_loose = re.compile(pattern_str_loose)
-            for f in files:
-                match = pattern_loose.search(f)
-                if match:
-                    ver = int(match.group(1))
-                    candidates.append((ver, f))
+            raise ValueError(
+                f"No model files found in {repo_id}. "
+                f"Expected pattern: models/anime_seg_dinov2_<size>_v<version>.safetensors"
+            )
         
-        if not candidates:
-            raise ValueError(f"No model files found in {repo_id} for size '{model_size}'. Expected pattern like 'models/anime_seg_dinov2_{model_size}_v1.safetensors'.")
-            
-        # Sort by version descending
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        
-        latest_ver, latest_file = candidates[0]
-        
-        if version:
-            # Find specific version
-            found = False
-            for v, f in candidates:
-                if str(v) == str(version) or f"v{version}" in f:
-                    return f
-            if not found:
-                 print(f"Version {version} not found. Loading latest v{latest_ver} instead.")
-        
+        # Return latest version
+        candidates.sort(reverse=True)
+        latest_file = candidates[0][1]
+        print(f"Found latest: {latest_file}")
         return latest_file
-
-    def preprocess(self, image: Image.Image) -> torch.Tensor:
-        """Process image for DINOv2 (Resize to multiple of 14, Normalize)."""
-        w, h = image.size
+    
+    def _parse_model_size(self, filename: str) -> str:
+        """Extract model size from filename."""
+        # e.g., "anime_seg_dinov2_large_v1.safetensors" -> "large"
+        match = re.search(r"dinov2_(\w+)_v\d+", filename)
+        if match:
+            return match.group(1)
+        # Fallback
+        return "large"
+    
+    def _preprocess(self, image: Image.Image) -> torch.Tensor:
+        """Preprocess image to 512x512 with ImageNet normalization."""
+        img_resized = image.resize((512, 512), Image.BILINEAR)
+        img_np = np.array(img_resized, dtype=np.float32) / 255.0
         
-        # Target size: next multiple of patch_size (14)
-        # Ideally keeping aspect ratio, but for simplicity we assume square resize 
-        # as the model requires square features for simple reshaping.
-        # User's v5 pipeline uses 518x518 to fix artifacts.
-        # But MVP script specifies 512.
-        target_size = 512 
+        # ImageNet normalization
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        img_np = (img_np - mean) / std
         
-        img_resized = image.resize((target_size, target_size), Image.BILINEAR)
-        img_np = np.array(img_resized)
-        
-        # Normalize
-        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-        img_tensor = (img_tensor - mean) / std
-        
-        return img_tensor.unsqueeze(0).to(self.device), (w, h)
-
-    def __call__(
-        self, 
-        images: Union[Image.Image, str, List[Union[Image.Image, str]]], 
-        return_color: bool = False,
-        alpha: float = 0.6
-    ) -> Union[Image.Image, List[Image.Image]]:
+        # Convert to tensor
+        tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).float()
+        return tensor.to(self.device)
+    
+    def __call__(self, image: Union[str, Image.Image]) -> Image.Image:
         """
-        Run inference.
+        Run segmentation inference.
         
         Args:
-            images: PIL Image or path, or list of them.
-            return_color: If True, returns visualization (blended image). If False, returns class ID mask.
-            alpha: blending factor for color mode.
+            image: Input image (PIL Image or file path)
             
         Returns:
-            PIL Image(s) (Mask or Blended)
+            Colored segmentation mask (PIL Image)
         """
-        is_batch = isinstance(images, list)
-        if not is_batch:
-            images = [images]
-            
-        results = []
+        # Load image
+        if isinstance(image, str):
+            img = Image.open(image).convert('RGB')
+        else:
+            img = image.convert('RGB')
         
-        for img_input in images:
-            if isinstance(img_input, str):
-                img = Image.open(img_input).convert('RGB')
-            else:
-                img = img_input.convert('RGB')
-                
-            input_tensor, original_size = self.preprocess(img)
-            
-            with torch.no_grad():
-                logits = self.model(input_tensor) # (1, num_classes, 512, 512)
-                preds = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy() # (512, 512)
-            
-            orig_w, orig_h = original_size
-            
-            if return_color:
-                # Colorize 512x512 first
-                h, w = preds.shape
-                mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
-                for class_id, color in ID_TO_COLOR.items():
-                    if class_id == 0: continue
-                    mask_overlay[preds == class_id] = color
-                
-                # Resize colored mask to original size
-                mask_pil = Image.fromarray(mask_overlay).resize((orig_w, orig_h), Image.NEAREST)
-                
-                # Blend with original image
-                img_np = np.array(img.resize((orig_w, orig_h))) # Ensure img is same size if it wasn't
-                mask_np = np.array(mask_pil)
-                
-                blended = (img_np * (1 - alpha) + mask_np * alpha).astype(np.uint8)
-                results.append(Image.fromarray(blended))
-            else:
-                # Return mask (P mode)
-                mask_img = Image.fromarray(preds.astype(np.uint8))
-                mask_img.putpalette([c for color in ID_TO_COLOR.values() for c in color])
-                # Resize to original
-                mask_img = mask_img.resize((orig_w, orig_h), Image.NEAREST)
-                results.append(mask_img)
-                
-        if not is_batch:
-            return results[0]
-        return results
+        original_size = img.size
+        
+        # Preprocess
+        input_tensor = self._preprocess(img)
+        
+        # Inference
+        with torch.no_grad():
+            logits = self.model(input_tensor)  # (1, num_classes, 512, 512)
+            preds = torch.argmax(logits, dim=1).cpu().numpy()[0]  # (512, 512)
+        
+        # Colorize prediction
+        h, w = preds.shape
+        colored = np.zeros((h, w, 3), dtype=np.uint8)
+        for class_id, color in ID_TO_COLOR.items():
+            colored[preds == class_id] = color
+        
+        # Resize to original size
+        mask_img = Image.fromarray(colored).resize(original_size, Image.NEAREST)
+        
+        return mask_img
+

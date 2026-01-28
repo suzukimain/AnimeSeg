@@ -1,4 +1,6 @@
-from .pipeline import AnimeSegPipeline, COLORS, CLASS_TO_ID
-from .modeling import DINOv2ForSegmentation, create_model
+"""AnimeSeg - Anime Character Segmentation using DINOv2 + U-Net++"""
 
-__all__ = ["AnimeSegPipeline", "DINOv2ForSegmentation", "create_model", "COLORS", "CLASS_TO_ID"]
+from .pipeline import AnimeSegPipeline
+
+__version__ = "0.1.0"
+__all__ = ["AnimeSegPipeline"]
