@@ -9,6 +9,13 @@
 
 ## 最小限の使い方 (MVP)
 
+## サンプル画像
+
+<p align="center">
+    <img src="images/sample.png" alt="サンプル画像" width="50%">
+</p>
+
+
 ### 1. インストール
 
 ```python
