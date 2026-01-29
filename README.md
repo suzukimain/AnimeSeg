@@ -8,6 +8,13 @@
 
 Anime Character Segmentation using DINOv2 + U-Net++ with LoRA fine-tuning.
 
+## sample image
+
+<p align="center">
+    <img src="images/sample.png" alt="sample image" width="50%">
+</p>
+
+
 ## Installation
 
 ```bash
