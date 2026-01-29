@@ -1,6 +1,7 @@
 # AnimeSeg
 
 <p>
+    <a href="https://pepy.tech/project/anime_seg"><img alt="GitHub release" src="https://static.pepy.tech/badge/anime_seg"></a>
     <a href="https://github.com/suzukimain/AnimeSeg/releases"><img alt="GitHub release" src="https://img.shields.io/github/release/suzukimain/AnimeSeg.svg"></a>
     <img src="https://visitor-badge.laobi.icu/badge?page_id=suzukimain.AnimeSeg" alt="Visitor Badge">
 </p>
