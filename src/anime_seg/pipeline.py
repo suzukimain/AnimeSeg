@@ -101,8 +101,8 @@ class AnimeSegPipeline:
             config_name=config_name,
         )
 
-    def __call__(self, image):
-        return self._impl(image)
+    def __call__(self, image, *args, **kwargs):
+        return self._impl(image, *args, **kwargs)
 
     def __getattr__(self, name):
         return getattr(self._impl, name)

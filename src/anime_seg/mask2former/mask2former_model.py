@@ -9,7 +9,7 @@ from safetensors.torch import load_file
 
 
 class Mask2FormerAnimeSegModel(nn.Module):
-    def __init__(self, base_model: str, num_classes: int = 13) -> None:
+    def __init__(self, base_model: str, num_classes: int = 12) -> None:
         super().__init__()
         try:
             from transformers import Mask2FormerForUniversalSegmentation

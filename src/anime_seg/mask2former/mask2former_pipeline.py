@@ -13,40 +13,34 @@ from PIL import Image
 from .mask2former_model import Mask2FormerAnimeSegModel
 
 
-COLORS = {
-    "background": (0, 0, 0),
-    "hair_main": (255, 0, 0),
-    "hair_thin": (128, 0, 0),
-    "skin": (255, 220, 180),
-    "face": (100, 150, 255),
-    "clothes": (180, 0, 255),
-    "right_eyebrow": (0, 255, 100),
-    "left_eyebrow": (150, 255, 0),
-    "nose": (255, 140, 0),
-    "mouth": (255, 0, 150),
-    "right_eye": (255, 255, 0),
-    "left_eye": (0, 255, 255),
-    "unknown": (64, 64, 64),
+DEFAULT_NUM_CLASSES = 12
+
+# Mask2Former training scripts use 12 classes (id=11 is accessory).
+ID_TO_COLOR_12 = {
+    0: (0, 0, 0),
+    1: (255, 220, 180),
+    2: (100, 150, 255),
+    3: (255, 0, 0),
+    4: (0, 255, 255),
+    5: (255, 255, 0),
+    6: (150, 255, 0),
+    7: (0, 255, 100),
+    8: (255, 140, 0),
+    9: (255, 0, 150),
+    10: (180, 0, 255),
+    11: (128, 128, 0),
 }
 
-CLASS_TO_ID = {
-    "background": 0,
-    "skin": 1,
-    "face": 2,
-    "hair_main": 3,
-    "left_eye": 4,
-    "right_eye": 5,
-    "left_eyebrow": 6,
-    "right_eyebrow": 7,
-    "nose": 8,
-    "mouth": 9,
-    "clothes": 10,
-    "hair_thin": 11,
-    "unknown": 12,
-}
 
-NUM_CLASSES = len(CLASS_TO_ID)
-ID_TO_COLOR = {cls_id: COLORS[cls_name] for cls_name, cls_id in CLASS_TO_ID.items()}
+def _build_id_to_color(num_classes: int) -> Dict[int, Tuple[int, int, int]]:
+    if num_classes <= 12:
+        return {k: v for k, v in ID_TO_COLOR_12.items() if k < num_classes}
+
+    id_to_color = dict(ID_TO_COLOR_12)
+    # Additional classes are rendered as dark gray by default.
+    for class_id in range(12, num_classes):
+        id_to_color[class_id] = (64, 64, 64)
+    return id_to_color
 
 
 class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
@@ -60,7 +54,6 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str = "models/model_config.json",
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.num_classes = NUM_CLASSES
 
         model_meta = self._resolve_model_meta(
             repo_id=repo_id,
@@ -68,6 +61,13 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
             filename=filename,
             config_name=config_name,
         )
+
+        config_obj = model_meta.get("Config", {}) if isinstance(model_meta, dict) else {}
+        if not isinstance(config_obj, dict):
+            config_obj = {}
+        self.num_classes = int(config_obj.get("num_classes", DEFAULT_NUM_CLASSES))
+        self.id_to_color = _build_id_to_color(self.num_classes)
+
         selected_filename = filename or model_meta.get("FilePath", "")
         selected_base_model = model_meta.get("BaseModel", base_model)
         self.train_image_size = int(model_meta.get("TrainImageSize", 768))
@@ -197,22 +197,11 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
 
         with torch.no_grad():
             outputs = self.model(input_tensor)
-            query_mask_logits = outputs["query_mask_logits"]
-            query_part_logits = outputs["query_part_logits"]
-
-            class_probs = torch.softmax(query_part_logits, dim=-1)[..., : self.num_classes]
-            class_ids = torch.argmax(class_probs, dim=-1)
-            class_conf = torch.max(class_probs, dim=-1).values
-
-            query_scores = torch.sigmoid(query_mask_logits) * class_conf.unsqueeze(-1).unsqueeze(-1)
-            best_query = torch.argmax(query_scores, dim=1)
-
-            preds = torch.gather(class_ids, 1, best_query.view(best_query.shape[0], -1))
-            preds = preds.view(best_query.shape[0], best_query.shape[1], best_query.shape[2]).cpu().numpy()[0]
+            preds = torch.argmax(outputs["semantic_logits"], dim=1).cpu().numpy()[0]
 
         h, w = preds.shape
         colored = np.zeros((h, w, 3), dtype=np.uint8)
-        for class_id, color in ID_TO_COLOR.items():
+        for class_id, color in self.id_to_color.items():
             colored[preds == class_id] = color
 
         return Image.fromarray(colored).resize(target_size, 0)
