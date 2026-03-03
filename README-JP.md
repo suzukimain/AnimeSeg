@@ -12,7 +12,7 @@
 ## サンプル画像
 
 <p align="center">
-    <img src="images/sample.png" alt="サンプル画像" width="50%">
+    <img src="https://raw.githubusercontent.com/suzukimain/AnimeSeg/refs/heads/main/images/sample2.png" alt="サンプル画像" width="50%">
 </p>
 
 
