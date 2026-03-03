@@ -81,6 +81,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         if not isinstance(config_obj, dict):
             config_obj = {}
         self.num_classes = int(config_obj.get("num_classes", DEFAULT_NUM_CLASSES))
+        merged_full = bool(config_obj.get("merged_full", False))
         self.id_to_color = _build_id_to_color(self.num_classes)
 
         selected_filename = filename or model_meta.get("FilePath", "")
@@ -112,6 +113,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                 model = Mask2FormerAnimeSegModel(
                     base_model=candidate_base_model,
                     num_classes=self.num_classes,
+                    load_base_pretrained=not merged_full,
                 )
                 model.load_checkpoint(checkpoint_path)
                 model_impl = model

@@ -381,6 +381,7 @@ class DINOv2ForSegmentation(nn.Module):
         self,
         num_classes: int,
         model_name: str = "facebook/dinov2-base",
+        load_backbone_pretrained: bool = True,
         use_lora: bool = True,
         lora_r: int = 8,
         lora_alpha: int = 16,
@@ -397,29 +398,43 @@ class DINOv2ForSegmentation(nn.Module):
         
         self.num_classes = num_classes
         self.use_lora = use_lora
+        self.load_backbone_pretrained = load_backbone_pretrained
         
         # ========== Load Backbone ==========
         # ========== Load Backbone ==========
         print(f"Loading DINOv2 model: {model_name}")
-        try:
-            self.backbone = AutoModel.from_pretrained(
-                model_name,
-                output_hidden_states=True,
-            )
-        except (OSError, Exception) as e:
-            print(f"Warning: Failed to load backbone from HF ({e}). Initializing from config/scratch.")
-            from transformers import Dinov2Config, Dinov2Model
-            
-            # Determine size from name
+        from transformers import Dinov2Config, Dinov2Model
+
+        if load_backbone_pretrained:
+            try:
+                self.backbone = AutoModel.from_pretrained(
+                    model_name,
+                    output_hidden_states=True,
+                )
+            except (OSError, Exception) as e:
+                print(f"Warning: Failed to load backbone from HF ({e}). Initializing from config/scratch.")
+
+                if "large" in model_name:
+                    config = Dinov2Config(hidden_size=1024, num_hidden_layers=24, num_attention_heads=16, image_size=518)
+                elif "giant" in model_name:
+                    config = Dinov2Config(hidden_size=1536, num_hidden_layers=40, num_attention_heads=24, image_size=518)
+                elif "small" in model_name:
+                    config = Dinov2Config(hidden_size=384, num_hidden_layers=12, num_attention_heads=6, image_size=518)
+                else: # base
+                    config = Dinov2Config(hidden_size=768, num_hidden_layers=12, num_attention_heads=12, image_size=518)
+
+                config.output_hidden_states = True
+                self.backbone = Dinov2Model(config)
+        else:
             if "large" in model_name:
-                config = Dinov2Config(hidden_size=1024, num_hidden_layers=24, num_attention_heads=16)
+                config = Dinov2Config(hidden_size=1024, num_hidden_layers=24, num_attention_heads=16, image_size=518)
             elif "giant" in model_name:
-                config = Dinov2Config(hidden_size=1536, num_hidden_layers=40, num_attention_heads=24)
+                config = Dinov2Config(hidden_size=1536, num_hidden_layers=40, num_attention_heads=24, image_size=518)
             elif "small" in model_name:
-                config = Dinov2Config(hidden_size=384, num_hidden_layers=12, num_attention_heads=6)
-            else: # base
-                config = Dinov2Config(hidden_size=768, num_hidden_layers=12, num_attention_heads=12)
-                
+                config = Dinov2Config(hidden_size=384, num_hidden_layers=12, num_attention_heads=6, image_size=518)
+            else:  # base
+                config = Dinov2Config(hidden_size=768, num_hidden_layers=12, num_attention_heads=12, image_size=518)
+
             config.output_hidden_states = True
             self.backbone = Dinov2Model(config)
 
@@ -531,6 +546,7 @@ class DINOv2ForSegmentation(nn.Module):
 def create_model(
     num_classes: int,
     model_size: str = "base",
+    load_backbone_pretrained: bool = True,
     use_lora: bool = True,
     decoder_channels: int = 256,
     use_attention: bool = True,
@@ -563,6 +579,7 @@ def create_model(
     return DINOv2ForSegmentation(
         num_classes=num_classes,
         model_name=model_name,
+        load_backbone_pretrained=load_backbone_pretrained,
         use_lora=use_lora,
         decoder_channels=decoder_channels,
         use_attention=use_attention,

@@ -26,18 +26,17 @@ pip install anime_seg
 
 ```python
 from anime_seg import AnimeSegPipeline
-
-# Initialize pipeline (models/model_config.json first, then fallback filename search)
 pipe = AnimeSegPipeline.from_mask2former().to("cuda")
-
-# NOTE:
-# `AnimeSegPipeline()` default constructor is deprecated.
-# Use `AnimeSegPipeline.from_mask2former()` or `AnimeSegPipeline.from_dinoV2()`.
-
-# Run segmentation
 mask = pipe("path/to/image.jpg")
+mask.save("output.png")
+```
 
-# If width/height are omitted, output keeps original input size
+`AnimeSegPipeline()` default constructor is deprecated. Use `from_mask2former()` or `from_dinoV2()`.
+
+## Optional: output size
+
+```python
+# Same as input size (default)
 mask_same = pipe("path/to/image.jpg")
 
 # Fixed output size
@@ -46,15 +45,12 @@ mask_fixed = pipe("path/to/image.jpg", width=1024, height=1024)
 # Width/height can be specified independently
 mask_w = pipe("path/to/image.jpg", width=1024)
 mask_h = pipe("path/to/image.jpg", height=1024)
-
-# Save result
-mask.save("output.png")
 ```
 
 ## Advanced Usage
 
 ```python
-# Specify custom repo or filename explicitly
+# Load specific file from HF repo
 pipe = AnimeSegPipeline.from_mask2former(
     repo_id="suzukimain/AnimeSeg",
     filename="models/anime_seg_mask2former_v3.safetensors"
@@ -88,6 +84,8 @@ Resolution order:
 
 ## Segmentation Classes and Mask Colors
 
+Default `from_mask2former()` returns **12 classes**:
+
 | ID | Class Key | RGB | Color |
 |---:|---|---|---|
 | 0 | background | (0, 0, 0) | Black |
@@ -101,8 +99,9 @@ Resolution order:
 | 8 | nose | (255, 140, 0) | Dark Orange |
 | 9 | mouth | (255, 0, 150) | Magenta Pink |
 | 10 | clothes | (180, 0, 255) | Purple |
-| 11 | hair_thin | (128, 0, 0) | Dark Red |
-| 12 | unknown | (64, 64, 64) | Dark Gray |
+| 11 | accessory | (128, 128, 0) | Olive |
+
+`from_dinoV2()` returns **13 classes** (includes `unknown` as ID 12).
 
 ## DINOv2 Compatibility Note
 

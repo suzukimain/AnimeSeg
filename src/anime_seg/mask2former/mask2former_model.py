@@ -9,15 +9,19 @@ from safetensors.torch import load_file
 
 
 class Mask2FormerAnimeSegModel(nn.Module):
-    def __init__(self, base_model: str, num_classes: int = 12) -> None:
+    def __init__(self, base_model: str, num_classes: int = 12, load_base_pretrained: bool = True) -> None:
         super().__init__()
         try:
-            from transformers import Mask2FormerForUniversalSegmentation
+            from transformers import Mask2FormerConfig, Mask2FormerForUniversalSegmentation
         except ImportError as exc:
             raise ImportError("transformers が必要です: pip install transformers") from exc
 
         self.num_classes = num_classes
-        self.model = Mask2FormerForUniversalSegmentation.from_pretrained(base_model)
+        if load_base_pretrained:
+            self.model = Mask2FormerForUniversalSegmentation.from_pretrained(base_model)
+        else:
+            config = Mask2FormerConfig.from_pretrained(base_model)
+            self.model = Mask2FormerForUniversalSegmentation(config)
 
         if getattr(self.model.config, "num_labels", None) != num_classes:
             hidden_dim = int(getattr(self.model.config, "hidden_dim", 256))

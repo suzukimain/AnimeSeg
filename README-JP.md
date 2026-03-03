@@ -26,17 +26,16 @@ pip install anime_seg
 
 ```python
 from anime_seg import AnimeSegPipeline
-
-# パイプラインの初期化 (models/model_config.json 優先)
 pipe = AnimeSegPipeline.from_mask2former().to("cuda")
-
-# NOTE:
-# `AnimeSegPipeline()` のデフォルト呼び出しは非推奨です。
-# `AnimeSegPipeline.from_mask2former()` または `AnimeSegPipeline.from_dinoV2()` を使ってください。
-
-# 推論の実行
 mask = pipe("path/to/image.jpg")
+mask.save("output.png")
+```
 
+`AnimeSegPipeline()` のデフォルト呼び出しは非推奨です。`from_mask2former()` または `from_dinoV2()` を使ってください。
+
+### 3. オプション: 出力サイズ指定
+
+```python
 # 出力サイズを指定しない場合は入力画像サイズで返す
 mask_same = pipe("path/to/image.jpg")
 
@@ -46,9 +45,6 @@ mask_fixed = pipe("path/to/image.jpg", width=1024, height=1024)
 # 片側のみ指定した場合、未指定側は入力サイズを維持
 mask_w = pipe("path/to/image.jpg", width=1024)
 mask_h = pipe("path/to/image.jpg", height=1024)
-
-# 結果の保存
-mask.save("output.png")
 ```
 
 ## 詳細設定
@@ -56,6 +52,7 @@ mask.save("output.png")
 ### カスタムリポジトリ・ファイル名の指定
 
 ```python
+# HFリポジトリ上の特定ファイルを指定
 pipe = AnimeSegPipeline.from_mask2former(
     repo_id="suzukimain/AnimeSeg",
     filename="models/anime_seg_mask2former_v3.safetensors"
@@ -90,7 +87,9 @@ models/anime_seg_{アーキテクチャ}_v{バージョン}.safetensors
 1. `models/model_config.json`
 2. フォールバックで `models/anime_seg_{architecture}_v{最大バージョン}.{拡張子}`
 
-## セグメンテーションクラス (13クラス)
+## セグメンテーションクラス
+
+`from_mask2former()` のデフォルトは **12クラス** です。
 
 | ID | クラスキー | 名前 | RGB | 色名 |
 |---:|---|---|---|---|
@@ -105,8 +104,9 @@ models/anime_seg_{アーキテクチャ}_v{バージョン}.safetensors
 | 8 | nose | 鼻 | (255, 140, 0) | ダークオレンジ |
 | 9 | mouth | 口 | (255, 0, 150) | マゼンタピンク |
 | 10 | clothes | 服 | (180, 0, 255) | パープル |
-| 11 | hair_thin | 髪(細い部分) | (128, 0, 0) | ダークレッド |
-| 12 | unknown | 不明 | (64, 64, 64) | ダークグレー |
+| 11 | accessory | アクセサリー | (128, 128, 0) | オリーブ |
+
+`from_dinoV2()` は **13クラス**（ID 12 に `unknown` を含む）です。
 
 ## トラブルシューティング
 

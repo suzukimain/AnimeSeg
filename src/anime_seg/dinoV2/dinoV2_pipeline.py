@@ -98,6 +98,11 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             filename=filename,
             config_name=config_name,
         )
+        config_obj = model_meta.get("Config", {}) if isinstance(model_meta, dict) else {}
+        if not isinstance(config_obj, dict):
+            config_obj = {}
+        merged_full = bool(config_obj.get("merged_full", False))
+
         selected_filename = filename or str(model_meta.get("FilePath", ""))
         self.train_image_size = int(model_meta.get("TrainImageSize", 512))
 
@@ -118,6 +123,7 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         self.model = create_model(
             num_classes=self.num_classes,
             model_size=model_size,
+            load_backbone_pretrained=not merged_full,
             use_lora=True,
             lora_r=8,
             lora_alpha=16,
