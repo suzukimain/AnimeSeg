@@ -15,6 +15,7 @@ setup(
     install_requires=[
         "torch>=2.0.0",
         "numpy",
+        "scipy",
         "Pillow",
         "transformers",
         "huggingface_hub",

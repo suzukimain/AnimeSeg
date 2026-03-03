@@ -26,26 +26,40 @@ pip install anime_seg
 
 ```python
 from anime_seg import AnimeSegPipeline
-
-# Initialize pipeline (auto-downloads latest model from Hugging Face)
-pipe = AnimeSegPipeline()
-
-# Run segmentation
+pipe = AnimeSegPipeline.from_mask2former().to("cuda")
 mask = pipe("path/to/image.jpg")
-
-# Save result
 mask.save("output.png")
+```
+
+`AnimeSegPipeline()` default constructor is deprecated. Use `from_mask2former()` or `from_dinoV2()`.
+
+## Optional: output size
+
+```python
+# Same as input size (default)
+mask_same = pipe("path/to/image.jpg")
+
+# Fixed output size
+mask_fixed = pipe("path/to/image.jpg", width=1024, height=1024)
+
+# Width/height can be specified independently
+mask_w = pipe("path/to/image.jpg", width=1024)
+mask_h = pipe("path/to/image.jpg", height=1024)
 ```
 
 ## Advanced Usage
 
 ```python
-# Specify custom repo or filename
-pipe = AnimeSegPipeline(
+# Load specific file from HF repo
+pipe = AnimeSegPipeline.from_mask2former(
     repo_id="suzukimain/AnimeSeg",
-    filename="models/anime_seg_dinov2_large_v1.safetensors",
-    device="cuda"  # or "cpu"
-)
+    filename="models/anime_seg_mask2former_v3.safetensors"
+).to(device="cuda")
+
+# DINOv2 backend
+pipe_dino = AnimeSegPipeline.from_dinoV2(
+    filename="models/anime_seg_dinov2_v2.safetensors"
+).to("cuda")
 
 # Use PIL Image
 from PIL import Image
@@ -57,23 +71,38 @@ mask = pipe(img)
 
 Models should follow the naming convention:
 ```
-models/anime_seg_{architecture}_{size}_v{version}.safetensors
+models/anime_seg_{architecture}_v{version}.safetensors
 ```
 
 Example:
-- `models/anime_seg_dinov2_large_v1.safetensors`
-- `models/anime_seg_dinov2_base_v2.safetensors`
+- `models/anime_seg_dinov2_v2.safetensors`
+- `models/anime_seg_mask2former_v3.safetensors`
 
-## Segmentation Classes
+Resolution order:
+1. `models/model_config.json`
+2. fallback scan by `models/anime_seg_{architecture}_v{max_version}.{ext}`
 
-- Background
-- Skin
-- Face
-- Hair (main)
-- Hair (thin)
-- Eyes (left/right)
-- Eyebrows (left/right)
-- Nose
-- Mouth
-- Clothes
-- Unknown
+## Segmentation Classes and Mask Colors
+
+Default `from_mask2former()` returns **12 classes**:
+
+| ID | Class Key | RGB | Color |
+|---:|---|---|---|
+| 0 | background | (0, 0, 0) | Black |
+| 1 | skin | (255, 220, 180) | Pale Orange |
+| 2 | face | (100, 150, 255) | Blue |
+| 3 | hair_main | (255, 0, 0) | Red |
+| 4 | left_eye | (0, 255, 255) | Cyan |
+| 5 | right_eye | (255, 255, 0) | Yellow |
+| 6 | left_eyebrow | (150, 255, 0) | Yellow Green |
+| 7 | right_eyebrow | (0, 255, 100) | Emerald Green |
+| 8 | nose | (255, 140, 0) | Dark Orange |
+| 9 | mouth | (255, 0, 150) | Magenta Pink |
+| 10 | clothes | (180, 0, 255) | Purple |
+| 11 | accessory | (128, 128, 0) | Olive |
+
+`from_dinoV2()` returns **13 classes** (includes `unknown` as ID 12).
+
+## DINOv2 Compatibility Note
+
+Earlier versions primarily used DINOv2. Current recommendation is `from_mask2former()`, while `from_dinoV2()` remains for compatibility.

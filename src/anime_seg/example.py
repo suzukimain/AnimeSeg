@@ -2,10 +2,12 @@
 Minimal example of using AnimeSegPipeline
 """
 from src.anime_seg import AnimeSegPipeline
-from PIL import Image
 
-# Initialize pipeline (auto-downloads latest model from HF)
-pipe = AnimeSegPipeline()
+# 1) Mask2Former backend (recommended)
+pipe = AnimeSegPipeline.from_mask2former().to("cuda")
+
+# 2) DINOv2 backend
+# pipe = AnimeSegPipeline.from_dinoV2().to(device="cuda")
 
 # Run inference
 mask = pipe("path/to/your/image.jpg")

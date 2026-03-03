@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from typing import Dict, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from safetensors.torch import load_file
+
+
+class Mask2FormerAnimeSegModel(nn.Module):
+    def __init__(self, base_model: str, num_classes: int = 12, load_base_pretrained: bool = True) -> None:
+        super().__init__()
+        try:
+            from transformers import Mask2FormerConfig, Mask2FormerForUniversalSegmentation
+        except ImportError as exc:
+            raise ImportError("transformers が必要です: pip install transformers") from exc
+
+        self.num_classes = num_classes
+        if load_base_pretrained:
+            self.model = Mask2FormerForUniversalSegmentation.from_pretrained(base_model)
+        else:
+            config = Mask2FormerConfig.from_pretrained(base_model)
+            self.model = Mask2FormerForUniversalSegmentation(config)
+
+        if getattr(self.model.config, "num_labels", None) != num_classes:
+            hidden_dim = int(getattr(self.model.config, "hidden_dim", 256))
+            self.model.config.num_labels = num_classes
+            self.model.class_predictor = nn.Linear(hidden_dim, num_classes + 1)
+
+    def load_checkpoint(self, checkpoint_path: str) -> Tuple[list, list]:
+        checkpoint_lower = checkpoint_path.lower()
+        if checkpoint_lower.endswith(".safetensors"):
+            state_dict = load_file(checkpoint_path)
+        elif checkpoint_lower.endswith(".pt") or checkpoint_lower.endswith(".pth"):
+            raw = torch.load(checkpoint_path, map_location="cpu")
+            if isinstance(raw, dict):
+                candidate_keys = [
+                    "state_dict",
+                    "model_state_dict",
+                    "model",
+                    "module",
+                ]
+                resolved = None
+                for key in candidate_keys:
+                    val = raw.get(key)
+                    if isinstance(val, dict):
+                        resolved = val
+                        break
+                state_dict = resolved if resolved is not None else raw
+            else:
+                raise RuntimeError("Unsupported checkpoint format in .pt/.pth file")
+        else:
+            raise RuntimeError(f"Unsupported checkpoint extension: {checkpoint_path}")
+
+        model_state_dict = self.model.state_dict()
+        target_keys = set(model_state_dict.keys())
+
+        state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+
+        candidates = {
+            "identity": state_dict,
+            "strip_model": {k[len("model."):] if k.startswith("model.") else k: v for k, v in state_dict.items()},
+            "add_model": {f"model.{k}": v for k, v in state_dict.items()},
+        }
+
+        best_name = "identity"
+        best_overlap = -1
+        for name, candidate in candidates.items():
+            overlap = len(target_keys.intersection(candidate.keys()))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_name = name
+
+        state_dict = candidates[best_name]
+
+        filtered_state_dict = {}
+        mismatched_keys = []
+        for key, value in state_dict.items():
+            if key not in model_state_dict:
+                continue
+            if model_state_dict[key].shape != value.shape:
+                mismatched_keys.append(key)
+                continue
+            filtered_state_dict[key] = value
+
+        if len(mismatched_keys) > 32:
+            raise RuntimeError(
+                "Checkpoint tensor shapes do not match current base model. "
+                "This usually means BaseModel is incorrect."
+            )
+
+        missing, unexpected = self.model.load_state_dict(filtered_state_dict, strict=False)
+
+        max_allowed_missing = max(32, int(0.2 * len(model_state_dict)))
+        if len(missing) > max_allowed_missing:
+            raise RuntimeError(
+                "Too many parameters are missing after checkpoint load. "
+                "Checkpoint key mapping is likely incorrect."
+            )
+
+        return missing, unexpected
+
+    def forward(self, pixel_values: torch.Tensor) -> Dict[str, torch.Tensor]:
+        h, w = pixel_values.shape[-2:]
+        outputs = self.model(pixel_values=pixel_values)
+
+        cls_logits = outputs.class_queries_logits
+        mask_logits = outputs.masks_queries_logits
+
+        cls_probs = F.softmax(cls_logits, dim=-1)[..., : self.num_classes]
+        up_mask_logits = F.interpolate(mask_logits, size=(h, w), mode="bilinear", align_corners=False)
+        up_mask_probs = up_mask_logits.sigmoid()
+
+        sem_prob = torch.einsum("bqc,bqhw->bchw", cls_probs, up_mask_probs)
+        sem_prob = sem_prob / sem_prob.sum(dim=1, keepdim=True).clamp(min=1e-6)
+        sem_logits = torch.log(sem_prob.clamp(min=1e-6))
+
+        return {
+            "semantic_logits": sem_logits,
+            "query_mask_logits": up_mask_logits,
+            "query_part_logits": cls_logits,
+        }
