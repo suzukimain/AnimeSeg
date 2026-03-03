@@ -16,6 +16,7 @@
       2
     ],
     "drop_path_rate": 0.3,
+    "dtype": "float32",
     "embed_dim": 128,
     "encoder_stride": 32,
     "eos_token_id": null,

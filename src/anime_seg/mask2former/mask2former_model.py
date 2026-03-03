@@ -53,17 +53,31 @@ class Mask2FormerAnimeSegModel(nn.Module):
         else:
             raise RuntimeError(f"Unsupported checkpoint extension: {checkpoint_path}")
 
+        model_state_dict = self.model.state_dict()
+        target_keys = set(model_state_dict.keys())
+
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 
-        if any(k.startswith("model.") for k in state_dict):
-            state_dict = {k[len("model."):] if k.startswith("model.") else k: v for k, v in state_dict.items()}
+        candidates = {
+            "identity": state_dict,
+            "strip_model": {k[len("model."):] if k.startswith("model.") else k: v for k, v in state_dict.items()},
+            "add_model": {f"model.{k}": v for k, v in state_dict.items()},
+        }
 
-        model_state_dict = self.model.state_dict()
+        best_name = "identity"
+        best_overlap = -1
+        for name, candidate in candidates.items():
+            overlap = len(target_keys.intersection(candidate.keys()))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_name = name
+
+        state_dict = candidates[best_name]
+
         filtered_state_dict = {}
         mismatched_keys = []
         for key, value in state_dict.items():
             if key not in model_state_dict:
-                filtered_state_dict[key] = value
                 continue
             if model_state_dict[key].shape != value.shape:
                 mismatched_keys.append(key)
@@ -77,6 +91,14 @@ class Mask2FormerAnimeSegModel(nn.Module):
             )
 
         missing, unexpected = self.model.load_state_dict(filtered_state_dict, strict=False)
+
+        max_allowed_missing = max(32, int(0.2 * len(model_state_dict)))
+        if len(missing) > max_allowed_missing:
+            raise RuntimeError(
+                "Too many parameters are missing after checkpoint load. "
+                "Checkpoint key mapping is likely incorrect."
+            )
+
         return missing, unexpected
 
     def forward(self, pixel_values: torch.Tensor) -> Dict[str, torch.Tensor]:

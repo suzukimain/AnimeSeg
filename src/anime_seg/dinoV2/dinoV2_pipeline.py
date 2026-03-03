@@ -124,10 +124,10 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             num_classes=self.num_classes,
             model_size=model_size,
             load_backbone_pretrained=not merged_full,
-            use_lora=True,
+            use_lora=not merged_full,
             lora_r=8,
             lora_alpha=16,
-            freeze_backbone=True
+            freeze_backbone=not merged_full,
         )
         
         # Load weights (strict=False for LoRA weights)
