@@ -117,21 +117,7 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
 
         model_size = self._parse_model_size(selected_filename, model_meta)
-        
-        # Create model with LoRA enabled, backbone frozen (MVP settings)
-        print(f"Initializing {model_size} model...")
-        self.model = create_model(
-            num_classes=self.num_classes,
-            model_size=model_size,
-            load_backbone_pretrained=not merged_full,
-            use_lora=not merged_full,
-            lora_r=8,
-            lora_alpha=16,
-            freeze_backbone=not merged_full,
-        )
-        
-        # Load weights (strict=False for LoRA weights)
-        print(f"Loading weights from {checkpoint_path}...")
+
         checkpoint_lower = checkpoint_path.lower()
         if checkpoint_lower.endswith(".safetensors"):
             state_dict = load_file(checkpoint_path)
@@ -150,9 +136,31 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
                 raise RuntimeError("Unsupported checkpoint format in .pt/.pth file")
         else:
             raise RuntimeError(f"Unsupported checkpoint extension: {checkpoint_path}")
-        
+
         # Clean state dict keys
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        inferred_merged_full = any(
+            k.startswith("backbone.base_model.model.embeddings.patch_embeddings.projection")
+            or k.startswith("backbone.model.embeddings.patch_embeddings.projection")
+            or k.startswith("backbone.embeddings.patch_embeddings.projection")
+            for k in state_dict.keys()
+        )
+        effective_merged_full = merged_full or inferred_merged_full
+        
+        # Create model with LoRA enabled, backbone frozen (MVP settings)
+        print(f"Initializing {model_size} model...")
+        self.model = create_model(
+            num_classes=self.num_classes,
+            model_size=model_size,
+            load_backbone_pretrained=not effective_merged_full,
+            use_lora=not effective_merged_full,
+            lora_r=8,
+            lora_alpha=16,
+            freeze_backbone=not effective_merged_full,
+        )
+        
+        # Load weights (strict=False for LoRA weights)
+        print(f"Loading weights from {checkpoint_path}...")
         
         missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
         
