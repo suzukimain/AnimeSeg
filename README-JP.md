@@ -27,11 +27,25 @@ pip install anime_seg
 ```python
 from anime_seg import AnimeSegPipeline
 
-# パイプラインの初期化 (HFから最新モデルを自動ダウンロード)
-pipe = AnimeSegPipeline()
+# パイプラインの初期化 (models/model_config.json 優先)
+pipe = AnimeSegPipeline.from_mask2former().to("cuda")
+
+# NOTE:
+# `AnimeSegPipeline()` のデフォルト呼び出しは非推奨です。
+# `AnimeSegPipeline.from_mask2former()` または `AnimeSegPipeline.from_dinoV2()` を使ってください。
 
 # 推論の実行
 mask = pipe("path/to/image.jpg")
+
+# 出力サイズを指定しない場合は入力画像サイズで返す
+mask_same = pipe("path/to/image.jpg")
+
+# 縦横を指定した場合はそのサイズで返す
+mask_fixed = pipe("path/to/image.jpg", width=1024, height=1024)
+
+# 片側のみ指定した場合、未指定側は入力サイズを維持
+mask_w = pipe("path/to/image.jpg", width=1024)
+mask_h = pipe("path/to/image.jpg", height=1024)
 
 # 結果の保存
 mask.save("output.png")
@@ -42,11 +56,15 @@ mask.save("output.png")
 ### カスタムリポジトリ・ファイル名の指定
 
 ```python
-pipe = AnimeSegPipeline(
+pipe = AnimeSegPipeline.from_mask2former(
     repo_id="suzukimain/AnimeSeg",
-    filename="models/anime_seg_dinov2_large_v1.safetensors",
-    device="cuda"  # または "cpu"
-)
+    filename="models/anime_seg_mask2former_v3.safetensors"
+).to(device="cuda")
+
+# DINOv2 を使う場合
+pipe_dino = AnimeSegPipeline.from_dinoV2(
+    filename="models/anime_seg_dinov2_v2.safetensors"
+).to("cuda")
 ```
 
 ### PIL Imageを直接使用
@@ -58,41 +76,37 @@ img = Image.open("image.jpg")
 mask = pipe(img)
 ```
 
-### プライベートリポジトリの使用
-
-```python
-pipe = AnimeSegPipeline(
-    repo_id="your-username/YourPrivateRepo",
-    token="hf_..."  # Hugging Face token
-)
-```
-
 ## モデルファイルの命名規則
 
 ```
-models/anime_seg_{アーキテクチャ}_{サイズ}_v{バージョン}.safetensors
+models/anime_seg_{アーキテクチャ}_v{バージョン}.safetensors
 ```
 
 例:
-- `models/anime_seg_dinov2_large_v1.safetensors`
-- `models/anime_seg_dinov2_base_v2.safetensors`
-- `models/anime_seg_dinov2_small_v1.safetensors`
+- `models/anime_seg_dinov2_v2.safetensors`
+- `models/anime_seg_mask2former_v3.safetensors`
+
+解決順序:
+1. `models/model_config.json`
+2. フォールバックで `models/anime_seg_{architecture}_v{最大バージョン}.{拡張子}`
 
 ## セグメンテーションクラス (13クラス)
 
-1. Background - 背景
-2. Skin - 肌
-3. Face - 顔
-4. Hair (main) - 髪の毛 (太い部分)
-5. Hair (thin) - 髪の毛 (細い部分)
-6. Left Eye - 左目
-7. Right Eye - 右目
-8. Left Eyebrow - 左眉
-9. Right Eyebrow - 右眉
-10. Nose - 鼻
-11. Mouth - 口
-12. Clothes - 服
-13. Unknown - 不明
+| ID | クラスキー | 名前 | RGB | 色名 |
+|---:|---|---|---|---|
+| 0 | background | 背景 | (0, 0, 0) | 黒 |
+| 1 | skin | 肌 | (255, 220, 180) | ペールオレンジ |
+| 2 | face | 顔 | (100, 150, 255) | 青 |
+| 3 | hair_main | 髪(太い部分) | (255, 0, 0) | 赤 |
+| 4 | left_eye | 左目 | (0, 255, 255) | シアン |
+| 5 | right_eye | 右目 | (255, 255, 0) | 黄 |
+| 6 | left_eyebrow | 左眉 | (150, 255, 0) | 黄緑 |
+| 7 | right_eyebrow | 右眉 | (0, 255, 100) | エメラルドグリーン |
+| 8 | nose | 鼻 | (255, 140, 0) | ダークオレンジ |
+| 9 | mouth | 口 | (255, 0, 150) | マゼンタピンク |
+| 10 | clothes | 服 | (180, 0, 255) | パープル |
+| 11 | hair_thin | 髪(細い部分) | (128, 0, 0) | ダークレッド |
+| 12 | unknown | 不明 | (64, 64, 64) | ダークグレー |
 
 ## トラブルシューティング
 
@@ -102,19 +116,19 @@ models/anime_seg_{アーキテクチャ}_{サイズ}_v{バージョン}.safetens
 
 ```python
 # 手動でファイル名を指定
-pipe = AnimeSegPipeline(
-    filename="models/anime_seg_dinov2_large_v1.safetensors"
-)
+pipe = AnimeSegPipeline.from_dinoV2(
+    filename="models/anime_seg_dinov2_v2.safetensors"
+).to("cuda")
 ```
 
-### メモリ不足エラー
+### DINOv2 互換利用について
 
-より小さいモデルサイズを使用してください (small または base)。
+以前のバージョンでは DINOv2 ベースの利用が中心でしたが、現在は `from_mask2former()` を推奨しています。`from_dinoV2()` は互換用途として残しています。
 
 ## 技術仕様
 
 - **バックボーン**: DINOv2 (facebook/dinov2-large)
 - **微調整手法**: LoRA (r=8, alpha=16)
 - **デコーダ**: U-Net++ with CBAM attention
-- **入力サイズ**: 512x512 (自動リサイズ)
-- **出力**: カラーセグメンテーションマスク (元のサイズに戻す)
+- **推論入力サイズ**: 学習時サイズ (`TrainImageSize`) に自動リサイズ
+- **出力サイズ**: `width` / `height` 未指定時は入力画像サイズ、指定時は指定サイズ

@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+from typing import Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import torch
+from huggingface_hub import PyTorchModelHubMixin, hf_hub_download, list_repo_files
+from PIL import Image
+
+from .mask2former_model import Mask2FormerAnimeSegModel
+
+
+COLORS = {
+    "background": (0, 0, 0),
+    "hair_main": (255, 0, 0),
+    "hair_thin": (128, 0, 0),
+    "skin": (255, 220, 180),
+    "face": (100, 150, 255),
+    "clothes": (180, 0, 255),
+    "right_eyebrow": (0, 255, 100),
+    "left_eyebrow": (150, 255, 0),
+    "nose": (255, 140, 0),
+    "mouth": (255, 0, 150),
+    "right_eye": (255, 255, 0),
+    "left_eye": (0, 255, 255),
+    "unknown": (64, 64, 64),
+}
+
+CLASS_TO_ID = {
+    "background": 0,
+    "skin": 1,
+    "face": 2,
+    "hair_main": 3,
+    "left_eye": 4,
+    "right_eye": 5,
+    "left_eyebrow": 6,
+    "right_eyebrow": 7,
+    "nose": 8,
+    "mouth": 9,
+    "clothes": 10,
+    "hair_thin": 11,
+    "unknown": 12,
+}
+
+NUM_CLASSES = len(CLASS_TO_ID)
+ID_TO_COLOR = {cls_id: COLORS[cls_name] for cls_name, cls_id in CLASS_TO_ID.items()}
+
+
+class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
+    def __init__(
+        self,
+        repo_id: str = "suzukimain/AnimeSeg",
+        filename: str = "",
+        token: Optional[str] = None,
+        device: Optional[str] = None,
+        base_model: str = "facebook/mask2former-swin-large-ade-semantic",
+        config_name: str = "models/model_config.json",
+    ) -> None:
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.num_classes = NUM_CLASSES
+
+        model_meta = self._resolve_model_meta(
+            repo_id=repo_id,
+            token=token,
+            filename=filename,
+            config_name=config_name,
+        )
+        selected_filename = filename or model_meta.get("FilePath", "")
+        selected_base_model = model_meta.get("BaseModel", base_model)
+        self.train_image_size = int(model_meta.get("TrainImageSize", 768))
+
+        if selected_filename and os.path.isfile(selected_filename):
+            checkpoint_path = selected_filename
+        else:
+            if not selected_filename:
+                selected_filename = self._auto_detect_latest_model(repo_id, token)
+            checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
+
+        self.model = Mask2FormerAnimeSegModel(
+            base_model=selected_base_model,
+            num_classes=self.num_classes,
+        )
+        self.model.load_checkpoint(checkpoint_path)
+        self.model.to(self.device)
+        self.model.eval()
+
+    def _auto_detect_latest_model(self, repo_id: str, token: Optional[str]) -> str:
+        files = list_repo_files(repo_id=repo_id, token=token)
+        pattern = re.compile(r"models/anime_seg_mask2former_v(\d+)\.([A-Za-z0-9]+)$")
+        candidates: List[Tuple[int, str]] = []
+        for file_path in files:
+            match = pattern.search(file_path)
+            if match:
+                candidates.append((int(match.group(1)), file_path))
+        if not candidates:
+            raise RuntimeError(
+                "File management system appears to be broken. "
+                "Failed to resolve model from model_config.json and fallback file pattern. "
+                "Please try loading with explicit repo_id and filename."
+            )
+        candidates.sort(reverse=True)
+        return candidates[0][1]
+
+    def _resolve_model_meta(
+        self,
+        repo_id: str,
+        token: Optional[str],
+        filename: str,
+        config_name: str,
+    ) -> Dict:
+        try:
+            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            with open(config_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+        except Exception:
+            return {}
+
+        entries: List[Dict]
+        if isinstance(data, dict) and isinstance(data.get("models"), list):
+            entries = [x for x in data["models"] if isinstance(x, dict)]
+        elif isinstance(data, list):
+            entries = [x for x in data if isinstance(x, dict)]
+        else:
+            return {}
+
+        if filename:
+            for item in entries:
+                if item.get("FilePath") == filename:
+                    return item
+
+        mask_items = [x for x in entries if str(x.get("Architecture", "")).lower() == "mask2former"]
+        if not mask_items:
+            return {}
+        mask_items.sort(key=lambda x: int(x.get("Version", 0)), reverse=True)
+        return mask_items[0]
+
+    def _preprocess(self, image: Image.Image) -> torch.Tensor:
+        img_resized = image.resize((self.train_image_size, self.train_image_size), 2)
+        img_np = np.array(img_resized, dtype=np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        img_np = (img_np - mean) / std
+        tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).float()
+        return tensor.to(self.device)
+
+    def __call__(
+        self,
+        image: Union[str, Image.Image],
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ) -> Image.Image:
+        if isinstance(image, str):
+            img = Image.open(image).convert("RGB")
+        else:
+            img = image.convert("RGB")
+
+        original_size = img.size
+        target_size = (
+            int(width) if width is not None else original_size[0],
+            int(height) if height is not None else original_size[1],
+        )
+
+        if target_size[0] <= 0 or target_size[1] <= 0:
+            raise ValueError("output size must be positive")
+        input_tensor = self._preprocess(img)
+
+        with torch.no_grad():
+            outputs = self.model(input_tensor)
+            preds = torch.argmax(outputs["semantic_logits"], dim=1).cpu().numpy()[0]
+
+        h, w = preds.shape
+        colored = np.zeros((h, w, 3), dtype=np.uint8)
+        for class_id, color in ID_TO_COLOR.items():
+            colored[preds == class_id] = color
+
+        return Image.fromarray(colored).resize(target_size, 0)
+
+    def to(self, *args, **kwargs):
+        target = kwargs.get("device")
+        if target is None and len(args) > 0:
+            target = args[0]
+        if target is None:
+            return self
+        self.device = str(target)
+        self.model.to(target)
+        return self

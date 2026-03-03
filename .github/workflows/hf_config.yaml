@@ -1,0 +1,78 @@
+name: Update HF Model Config
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_path:
+        description: "FilePath (models/*.safetensors)"
+        required: true
+        type: string
+      train_image_size:
+        description: "TrainImageSize"
+        required: true
+        type: number
+      version:
+        description: "Version"
+        required: true
+        type: number
+      architecture:
+        description: "Architecture"
+        required: true
+        type: choice
+        options:
+          - dinov2
+          - mask2former
+      base_model:
+        description: "BaseModel"
+        required: true
+        type: string
+      config_json:
+        description: "Config JSON"
+        required: false
+        default: "{}"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Update model_config.json
+        run: |
+          python utils/update_hf_model_config.py \
+            --config-path models/model_config.json \
+            --file-path "${{ github.event.inputs.file_path }}" \
+            --train-image-size "${{ github.event.inputs.train_image_size }}" \
+            --version "${{ github.event.inputs.version }}" \
+            --architecture "${{ github.event.inputs.architecture }}" \
+            --base-model "${{ github.event.inputs.base_model }}" \
+            --config-json '${{ github.event.inputs.config_json }}'
+
+      - name: Show status
+        run: |
+          echo "## HF Config Update Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "- FilePath: ${{ github.event.inputs.file_path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- TrainImageSize: ${{ github.event.inputs.train_image_size }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version: ${{ github.event.inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Architecture: ${{ github.event.inputs.architecture }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- BaseModel: ${{ github.event.inputs.base_model }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add models/model_config.json
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update model_config.json via workflow"
+          git push
