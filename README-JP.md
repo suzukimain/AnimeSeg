@@ -5,6 +5,7 @@
     <img src="https://visitor-badge.laobi.icu/badge?page_id=suzukimain.AnimeSeg" alt="Visitor Badge">
 </p>
 
+Mask2Former、または DINOv2 + U-Net++ と LoRA ファインチューニングを使用したアニメキャラクターのセグメンテーション。
 
 ## サンプル画像
 

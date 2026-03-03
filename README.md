@@ -7,7 +7,7 @@
 </p>
 
 
-Anime Character Segmentation using DINOv2 + U-Net++ with LoRA fine-tuning.
+Anime Character Segmentation using Mask2Former and DINOv2 + U-Net++ with LoRA fine-tuning.
 
 ## sample image
 
