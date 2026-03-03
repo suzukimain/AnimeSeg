@@ -5,6 +5,7 @@ from PIL import Image
 from huggingface_hub import list_repo_files, hf_hub_download, PyTorchModelHubMixin
 import re
 import os
+from pathlib import Path
 from typing import Union, Optional, Dict, List, Tuple
 from safetensors.torch import load_file
 from .dinoV2_model import create_model
@@ -100,8 +101,9 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         selected_filename = filename or str(model_meta.get("FilePath", ""))
         self.train_image_size = int(model_meta.get("TrainImageSize", 512))
 
-        if selected_filename and os.path.isfile(selected_filename):
-            checkpoint_path = selected_filename
+        local_checkpoint_path = self._resolve_local_checkpoint_path(selected_filename)
+        if local_checkpoint_path is not None:
+            checkpoint_path = local_checkpoint_path
             print(f"Loading from local file: {checkpoint_path}")
         else:
             if not selected_filename:
@@ -124,7 +126,24 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         
         # Load weights (strict=False for LoRA weights)
         print(f"Loading weights from {checkpoint_path}...")
-        state_dict = load_file(checkpoint_path)
+        checkpoint_lower = checkpoint_path.lower()
+        if checkpoint_lower.endswith(".safetensors"):
+            state_dict = load_file(checkpoint_path)
+        elif checkpoint_lower.endswith(".pt") or checkpoint_lower.endswith(".pth"):
+            raw = torch.load(checkpoint_path, map_location="cpu")
+            if isinstance(raw, dict):
+                candidate_keys = ["state_dict", "model_state_dict", "model", "module"]
+                resolved = None
+                for key in candidate_keys:
+                    val = raw.get(key)
+                    if isinstance(val, dict):
+                        resolved = val
+                        break
+                state_dict = resolved if resolved is not None else raw
+            else:
+                raise RuntimeError("Unsupported checkpoint format in .pt/.pth file")
+        else:
+            raise RuntimeError(f"Unsupported checkpoint extension: {checkpoint_path}")
         
         # Clean state dict keys
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
@@ -139,6 +158,20 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         self.model.to(self.device)
         self.model.eval()
         print("Model ready")
+
+    def _resolve_local_checkpoint_path(self, path_str: str) -> Optional[str]:
+        if not path_str:
+            return None
+
+        candidate = Path(path_str)
+        if candidate.is_file():
+            return str(candidate)
+
+        root_candidate = Path.cwd() / path_str
+        if root_candidate.is_file():
+            return str(root_candidate)
+
+        return None
 
     def _resolve_model_meta(
         self,

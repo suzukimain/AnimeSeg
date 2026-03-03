@@ -22,10 +22,33 @@ class Mask2FormerAnimeSegModel(nn.Module):
         if getattr(self.model.config, "num_labels", None) != num_classes:
             hidden_dim = int(getattr(self.model.config, "hidden_dim", 256))
             self.model.config.num_labels = num_classes
-            self.model.class_predictor = nn.Linear(hidden_dim, num_classes)
+            self.model.class_predictor = nn.Linear(hidden_dim, num_classes + 1)
 
     def load_checkpoint(self, checkpoint_path: str) -> Tuple[list, list]:
-        state_dict = load_file(checkpoint_path)
+        checkpoint_lower = checkpoint_path.lower()
+        if checkpoint_lower.endswith(".safetensors"):
+            state_dict = load_file(checkpoint_path)
+        elif checkpoint_lower.endswith(".pt") or checkpoint_lower.endswith(".pth"):
+            raw = torch.load(checkpoint_path, map_location="cpu")
+            if isinstance(raw, dict):
+                candidate_keys = [
+                    "state_dict",
+                    "model_state_dict",
+                    "model",
+                    "module",
+                ]
+                resolved = None
+                for key in candidate_keys:
+                    val = raw.get(key)
+                    if isinstance(val, dict):
+                        resolved = val
+                        break
+                state_dict = resolved if resolved is not None else raw
+            else:
+                raise RuntimeError("Unsupported checkpoint format in .pt/.pth file")
+        else:
+            raise RuntimeError(f"Unsupported checkpoint extension: {checkpoint_path}")
+
         state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 
         if any(k.startswith("model.") for k in state_dict):

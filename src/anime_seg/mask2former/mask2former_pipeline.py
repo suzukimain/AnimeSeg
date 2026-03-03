@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -44,6 +45,20 @@ def _build_id_to_color(num_classes: int) -> Dict[int, Tuple[int, int, int]]:
 
 
 class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
+    def _resolve_local_checkpoint_path(self, path_str: str) -> Optional[str]:
+        if not path_str:
+            return None
+
+        candidate = Path(path_str)
+        if candidate.is_file():
+            return str(candidate)
+
+        root_candidate = Path.cwd() / path_str
+        if root_candidate.is_file():
+            return str(root_candidate)
+
+        return None
+
     def __init__(
         self,
         repo_id: str = "suzukimain/AnimeSeg",
@@ -72,8 +87,9 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         selected_base_model = model_meta.get("BaseModel", base_model)
         self.train_image_size = int(model_meta.get("TrainImageSize", 768))
 
-        if selected_filename and os.path.isfile(selected_filename):
-            checkpoint_path = selected_filename
+        local_checkpoint_path = self._resolve_local_checkpoint_path(selected_filename)
+        if local_checkpoint_path is not None:
+            checkpoint_path = local_checkpoint_path
         else:
             if not selected_filename:
                 selected_filename = self._auto_detect_latest_model(repo_id, token)
@@ -90,7 +106,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                 unique_base_models.append(candidate)
 
         last_error: Optional[Exception] = None
-        self.model = None
+        model_impl: Optional[Mask2FormerAnimeSegModel] = None
         for candidate_base_model in unique_base_models:
             try:
                 model = Mask2FormerAnimeSegModel(
@@ -98,17 +114,18 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                     num_classes=self.num_classes,
                 )
                 model.load_checkpoint(checkpoint_path)
-                self.model = model
+                model_impl = model
                 break
             except RuntimeError as exc:
                 last_error = exc
 
-        if self.model is None:
+        if model_impl is None:
             raise RuntimeError(
                 "Failed to load mask2former checkpoint with all candidate base models. "
                 f"Tried: {unique_base_models}"
             ) from last_error
 
+        self.model = model_impl
         self.model.to(self.device)
         self.model.eval()
 
