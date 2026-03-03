@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download, list_repo_files
 from PIL import Image
+from safetensors.torch import load_file
 
 from .mask2former_model import Mask2FormerAnimeSegModel
 
@@ -45,6 +46,37 @@ def _build_id_to_color(num_classes: int) -> Dict[int, Tuple[int, int, int]]:
 
 
 class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
+    def _infer_merged_full_from_checkpoint(self, checkpoint_path: str) -> bool:
+        lower = checkpoint_path.lower()
+        try:
+            if lower.endswith(".safetensors"):
+                keys = list(load_file(checkpoint_path).keys())
+            elif lower.endswith(".pt") or lower.endswith(".pth"):
+                raw = torch.load(checkpoint_path, map_location="cpu")
+                if isinstance(raw, dict):
+                    candidate_keys = ["state_dict", "model_state_dict", "model", "module"]
+                    resolved = None
+                    for key in candidate_keys:
+                        val = raw.get(key)
+                        if isinstance(val, dict):
+                            resolved = val
+                            break
+                    state_dict = resolved if resolved is not None else raw
+                    keys = list(state_dict.keys())
+                else:
+                    return False
+            else:
+                return False
+        except Exception:
+            return False
+
+        normalized = [k.replace("_orig_mod.", "") for k in keys]
+        return any(
+            k.startswith("model.pixel_level_module.encoder.embeddings.patch_embeddings.projection")
+            or k.startswith("pixel_level_module.encoder.embeddings.patch_embeddings.projection")
+            for k in normalized
+        )
+
     def _resolve_local_checkpoint_path(self, path_str: str) -> Optional[str]:
         if not path_str:
             return None
@@ -96,6 +128,9 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                 selected_filename = self._auto_detect_latest_model(repo_id, token)
             checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
 
+        inferred_merged_full = self._infer_merged_full_from_checkpoint(checkpoint_path)
+        effective_merged_full = merged_full or inferred_merged_full
+
         fallback_base_models = [
             selected_base_model,
             "facebook/mask2former-swin-base-ade-semantic",
@@ -113,7 +148,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                 model = Mask2FormerAnimeSegModel(
                     base_model=candidate_base_model,
                     num_classes=self.num_classes,
-                    load_base_pretrained=not merged_full,
+                    load_base_pretrained=not effective_merged_full,
                 )
                 model.load_checkpoint(checkpoint_path)
                 model_impl = model
