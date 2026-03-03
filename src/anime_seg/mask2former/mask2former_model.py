@@ -22,7 +22,7 @@ class Mask2FormerAnimeSegModel(nn.Module):
         if getattr(self.model.config, "num_labels", None) != num_classes:
             hidden_dim = int(getattr(self.model.config, "hidden_dim", 256))
             self.model.config.num_labels = num_classes
-            self.model.class_predictor = nn.Linear(hidden_dim, num_classes + 1)
+            self.model.class_predictor = nn.Linear(hidden_dim, num_classes)
 
     def load_checkpoint(self, checkpoint_path: str) -> Tuple[list, list]:
         state_dict = load_file(checkpoint_path)
@@ -31,7 +31,25 @@ class Mask2FormerAnimeSegModel(nn.Module):
         if any(k.startswith("model.") for k in state_dict):
             state_dict = {k[len("model."):] if k.startswith("model.") else k: v for k, v in state_dict.items()}
 
-        missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+        model_state_dict = self.model.state_dict()
+        filtered_state_dict = {}
+        mismatched_keys = []
+        for key, value in state_dict.items():
+            if key not in model_state_dict:
+                filtered_state_dict[key] = value
+                continue
+            if model_state_dict[key].shape != value.shape:
+                mismatched_keys.append(key)
+                continue
+            filtered_state_dict[key] = value
+
+        if len(mismatched_keys) > 32:
+            raise RuntimeError(
+                "Checkpoint tensor shapes do not match current base model. "
+                "This usually means BaseModel is incorrect."
+            )
+
+        missing, unexpected = self.model.load_state_dict(filtered_state_dict, strict=False)
         return missing, unexpected
 
     def forward(self, pixel_values: torch.Tensor) -> Dict[str, torch.Tensor]:

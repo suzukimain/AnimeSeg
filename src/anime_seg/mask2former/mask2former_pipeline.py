@@ -56,7 +56,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        base_model: str = "facebook/mask2former-swin-large-ade-semantic",
+        base_model: str = "facebook/mask2former-swin-base-ade-semantic",
         config_name: str = "models/model_config.json",
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -79,11 +79,36 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
                 selected_filename = self._auto_detect_latest_model(repo_id, token)
             checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
 
-        self.model = Mask2FormerAnimeSegModel(
-            base_model=selected_base_model,
-            num_classes=self.num_classes,
-        )
-        self.model.load_checkpoint(checkpoint_path)
+        fallback_base_models = [
+            selected_base_model,
+            "facebook/mask2former-swin-base-ade-semantic",
+            "facebook/mask2former-swin-large-ade-semantic",
+        ]
+        unique_base_models: List[str] = []
+        for candidate in fallback_base_models:
+            if candidate and candidate not in unique_base_models:
+                unique_base_models.append(candidate)
+
+        last_error: Optional[Exception] = None
+        self.model = None
+        for candidate_base_model in unique_base_models:
+            try:
+                model = Mask2FormerAnimeSegModel(
+                    base_model=candidate_base_model,
+                    num_classes=self.num_classes,
+                )
+                model.load_checkpoint(checkpoint_path)
+                self.model = model
+                break
+            except RuntimeError as exc:
+                last_error = exc
+
+        if self.model is None:
+            raise RuntimeError(
+                "Failed to load mask2former checkpoint with all candidate base models. "
+                f"Tried: {unique_base_models}"
+            ) from last_error
+
         self.model.to(self.device)
         self.model.eval()
 
@@ -112,7 +137,10 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str,
     ) -> Dict:
         try:
-            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            if os.path.isfile(config_name):
+                config_path = config_name
+            else:
+                config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
             with open(config_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
         except Exception:
@@ -169,7 +197,18 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
 
         with torch.no_grad():
             outputs = self.model(input_tensor)
-            preds = torch.argmax(outputs["semantic_logits"], dim=1).cpu().numpy()[0]
+            query_mask_logits = outputs["query_mask_logits"]
+            query_part_logits = outputs["query_part_logits"]
+
+            class_probs = torch.softmax(query_part_logits, dim=-1)[..., : self.num_classes]
+            class_ids = torch.argmax(class_probs, dim=-1)
+            class_conf = torch.max(class_probs, dim=-1).values
+
+            query_scores = torch.sigmoid(query_mask_logits) * class_conf.unsqueeze(-1).unsqueeze(-1)
+            best_query = torch.argmax(query_scores, dim=1)
+
+            preds = torch.gather(class_ids, 1, best_query.view(best_query.shape[0], -1))
+            preds = preds.view(best_query.shape[0], best_query.shape[1], best_query.shape[2]).cpu().numpy()[0]
 
         h, w = preds.shape
         colored = np.zeros((h, w, 3), dtype=np.uint8)

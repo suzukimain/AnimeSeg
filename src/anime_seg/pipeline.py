@@ -41,7 +41,7 @@ class AnimeSegPipeline:
                 filename=filename,
                 token=token,
                 device=device,
-                base_model=base_model or "facebook/mask2former-swin-large-ade-semantic",
+                base_model=base_model or "facebook/mask2former-swin-base-ade-semantic",
                 config_name=config_name,
             )
         else:
@@ -83,7 +83,7 @@ class AnimeSegPipeline:
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        base_model: str = "facebook/mask2former-swin-large-ade-semantic",
+        base_model: str = "facebook/mask2former-swin-base-ade-semantic",
         config_name: str = "models/model_config.json",
     ) -> Mask2FormerAnimeSegPipeline:
         if device is not None:

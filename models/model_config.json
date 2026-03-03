@@ -1,0 +1,25 @@
+{
+  "models": [
+    {
+      "FilePath": "models/anime_seg_dinov2_v2.safetensors",
+      "TrainImageSize": 768,
+      "Version": 2,
+      "Architecture": "dinov2",
+      "BaseModel": "facebook/dinov2-large",
+      "Config": {}
+    },
+    {
+      "FilePath": "models/anime_seg_mask2former_v3.safetensors",
+      "TrainImageSize": 768,
+      "Version": 3,
+      "Architecture": "mask2former",
+      "BaseModel": "facebook/mask2former-swin-base-ade-semantic",
+      "Config": {}
+    }
+  ],
+  "status": {
+    "last_operation": "created",
+    "last_target": "models/anime_seg_mask2former_v3.safetensors",
+    "count": 2
+  }
+}

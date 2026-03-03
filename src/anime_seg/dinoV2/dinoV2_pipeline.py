@@ -148,7 +148,10 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str,
     ) -> Dict:
         try:
-            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            if os.path.isfile(config_name):
+                config_path = config_name
+            else:
+                config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
             with open(config_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
         except Exception:
