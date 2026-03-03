@@ -180,6 +180,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Custom ignores
 tmp/
-models/*.safetensors
+models/

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="anime_seg",
-    version="0.1.6",
+    version="0.2.0",
     description="Anime Character Segmentation with DINOv2",
     long_description=open("README.md").read() if open("README.md").read() else "",
     long_description_content_type="text/markdown",
@@ -15,6 +15,7 @@ setup(
     install_requires=[
         "torch>=2.0.0",
         "numpy",
+        "scipy",
         "Pillow",
         "transformers",
         "huggingface_hub",
