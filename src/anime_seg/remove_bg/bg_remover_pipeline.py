@@ -9,6 +9,24 @@ from torch import amp
 
 from .isnet import ISNetDIS
 
+
+def _with_prefix_stripped(state_dict, prefix):
+    return {k[len(prefix):]: v for k, v in state_dict.items() if k.startswith(prefix)}
+
+
+def _candidate_state_dicts(state_dict):
+    candidates = [state_dict]
+    for prefix in ("net.", "module.", "model."):
+        stripped = _with_prefix_stripped(state_dict, prefix)
+        if stripped:
+            candidates.append(stripped)
+
+    module_then_net = _with_prefix_stripped(state_dict, "module.net.")
+    if module_then_net:
+        candidates.append(module_then_net)
+
+    return candidates
+
 class BgRemover:
     def __init__(self, model: ISNetDIS, device="cuda"):
         self.device = device
@@ -22,12 +40,21 @@ class BgRemover:
         
         model = ISNetDIS()
         state_dict = load_file(ckpt_path)
-        
-        # Adjust keys if they contain 'net.'
-        if len(state_dict) > 0 and list(state_dict.keys())[0].startswith("net."):
-            state_dict = {k.replace("net.", ""): v for k, v in state_dict.items() if k.startswith("net.")}
 
-        model.load_state_dict(state_dict, strict=True)
+        last_error = None
+        for candidate in _candidate_state_dicts(state_dict):
+            try:
+                model.load_state_dict(candidate, strict=True)
+                return cls(model, device)
+            except RuntimeError as exc:
+                last_error = exc
+
+        if last_error is not None:
+            raise RuntimeError(
+                "Failed to load BgRemover checkpoint. Supported formats are raw ISNetDIS state_dict "
+                "and prefixed keys such as 'net.*', 'module.*', or 'model.*'."
+            ) from last_error
+
         return cls(model, device)
 
     def to(self, device):
