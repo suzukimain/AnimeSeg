@@ -63,6 +63,10 @@ class BgRemover:
         return self
 
     def __call__(self, image: Image.Image, use_amp=True, s=1024, return_type="pil", bg_color=(255, 255, 255)):
+        if isinstance(image, str):
+            image = Image.open(image)
+        elif not isinstance(image, Image.Image):
+            raise ValueError(f"Input must be a PIL Image or a file path.:{type(image)}")
         input_img = np.array(image.convert("RGB"))
         input_img_norm = (input_img / 255.0).astype(np.float32)
         h0, w0 = input_img_norm.shape[:2]

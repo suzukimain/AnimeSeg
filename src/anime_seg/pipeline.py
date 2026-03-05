@@ -133,4 +133,4 @@ class AnimeSegPipeline:
         return getattr(self._impl, name)
 
 
-__all__ = ["AnimeSegPipeline", "DinoV2AnimeSegPipeline", "Mask2FormerAnimeSegPipeline"]
+__all__ = ["AnimeSegPipeline", "DinoV2AnimeSegPipeline", "Mask2FormerAnimeSegPipeline", "BgRemover"]
