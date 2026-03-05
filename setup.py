@@ -21,6 +21,7 @@ setup(
         "huggingface_hub",
         "safetensors",
         "peft",
+        "opencv-python",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -99,8 +99,13 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         device: Optional[str] = None,
         base_model: str = "facebook/mask2former-swin-base-ade-semantic",
         config_name: str = "models/model_config.json",
+        remove_bg: bool = True,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.remove_bg = remove_bg
+        if self.remove_bg:
+            from anime_seg.remove_bg.bg_remover_pipeline import BgRemover
+            self.bg_remover = BgRemover.from_single_file(device=self.device)
 
         model_meta = self._resolve_model_meta(
             repo_id=repo_id,
@@ -239,6 +244,9 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         else:
             img = image.convert("RGB")
 
+        if getattr(self, "remove_bg", False) and hasattr(self, "bg_remover"):
+            img = self.bg_remover(img)
+
         original_size = img.size
         target_size = (
             int(width) if width is not None else original_size[0],
@@ -268,4 +276,6 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
             return self
         self.device = str(target)
         self.model.to(target)
+        if getattr(self, "remove_bg", False) and hasattr(self, "bg_remover"):
+            self.bg_remover.to(target)
         return self
