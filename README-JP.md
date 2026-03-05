@@ -6,6 +6,7 @@
 </p>
 
 Mask2Former、または DINOv2 + U-Net++ と LoRA ファインチューニングを使用したアニメキャラクターのセグメンテーション。
+また、[anime-segmentation](https://github.com/SkyTNT/anime-segmentation) による背景削除機能も統合されています。
 
 ## サンプル画像
 
@@ -27,9 +28,14 @@ from anime_seg import AnimeSegPipeline
 pipe = AnimeSegPipeline.from_mask2former().to("cuda")
 mask = pipe("path/to/image.jpg")
 mask.save("output.png")
+
+# 背景削除 (powered by anime-segmentation)
+bg_pipe = AnimeSegPipeline.from_bg_remover().to("cuda")
+no_bg_img = bg_pipe("path/to/image.jpg")
+no_bg_img.save("no_bg_output.png")
 ```
 
-`AnimeSegPipeline()` のデフォルト呼び出しは非推奨です。`from_mask2former()` または `from_dinoV2()` を使ってください。
+`AnimeSegPipeline()` のデフォルト呼び出しは非推奨です。`from_mask2former()`、`from_dinoV2()`、または `from_bg_remover()` を使ってください。
 
 ### 3. オプション: 出力サイズ指定
 
@@ -69,6 +75,11 @@ from PIL import Image
 
 img = Image.open("image.jpg")
 mask = pipe(img)
+
+# 背景削除
+bg_pipe = AnimeSegPipeline.from_bg_remover().to("cuda")
+no_bg_img = bg_pipe(img)
+no_bg_img.save("no_bg_output.png")
 ```
 
 ## モデルファイルの命名規則

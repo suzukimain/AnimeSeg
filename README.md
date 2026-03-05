@@ -8,6 +8,7 @@
 
 
 Anime Character Segmentation using Mask2Former and DINOv2 + U-Net++ with LoRA fine-tuning.
+Also integrates Background Removal via [anime-segmentation](https://github.com/SkyTNT/anime-segmentation).
 
 ## sample image
 
@@ -29,9 +30,14 @@ from anime_seg import AnimeSegPipeline
 pipe = AnimeSegPipeline.from_mask2former().to("cuda")
 mask = pipe("path/to/image.jpg")
 mask.save("output.png")
+
+# Background Removal (powered by anime-segmentation)
+bg_pipe = AnimeSegPipeline.from_bg_remover().to("cuda")
+no_bg_img = bg_pipe("path/to/image.jpg")
+no_bg_img.save("no_bg_output.png")
 ```
 
-`AnimeSegPipeline()` default constructor is deprecated. Use `from_mask2former()` or `from_dinoV2()`.
+`AnimeSegPipeline()` default constructor is deprecated. Use `from_mask2former()`, `from_dinoV2()`, or `from_bg_remover()`.
 
 ## Optional: output size
 
@@ -65,6 +71,11 @@ pipe_dino = AnimeSegPipeline.from_dinoV2(
 from PIL import Image
 img = Image.open("image.jpg")
 mask = pipe(img)
+
+# Background Removal (powered by anime-segmentation)
+bg_pipe = AnimeSegPipeline.from_bg_remover().to("cuda")
+no_bg_img = bg_pipe("path/to/image.jpg")
+no_bg_img.save("no_bg_output.png")
 ```
 
 ## Model Files
