@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import warnings
 from typing import Optional
 
+from huggingface_hub import hf_hub_download
+
 from .dinoV2.dinoV2_pipeline import DinoV2AnimeSegPipeline
 from .mask2former.mask2former_pipeline import Mask2FormerAnimeSegPipeline
-
+from .remove_bg.bg_remover_pipeline import BgRemover
 
 class AnimeSegPipeline:
     def __init__(
@@ -115,9 +118,6 @@ class AnimeSegPipeline:
                 "Please call `.to(\"cuda\")` or `.to(device=\"cuda\")` after pipeline creation.",
                 UserWarning,
             )
-        import os
-        from huggingface_hub import hf_hub_download
-        from .remove_bg.bg_remover_pipeline import BgRemover
 
         if filename and os.path.isfile(filename):
             ckpt_path = filename
