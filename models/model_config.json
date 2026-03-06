@@ -19,11 +19,21 @@
       "Config": {
         "merged_full": true
       }
+    },
+    {
+      "FilePath": "models/anime_seg_mask2former_v4.safetensors",
+      "TrainImageSize": 768,
+      "Version": 4,
+      "Architecture": "mask2former",
+      "BaseModel": "facebook/mask2former-swin-large-ade-semantic",
+      "Config": {
+        "merged_full": true
+      }
     }
   ],
   "status": {
     "last_operation": "created",
-    "last_target": "models/anime_seg_mask2former_v3.safetensors",
-    "count": 2
+    "last_target": "models/anime_seg_mask2former_v4.safetensors",
+    "count": 3
   }
 }
