@@ -28,17 +28,34 @@ permissions:
 jobs:
   update-version:
     runs-on: ubuntu-22.04
+    outputs:
+      release_version: ${{ steps.set_version.outputs.release_version }}
+      base_version: ${{ steps.set_version.outputs.base_version }}
     steps:
     - name: Checkout Repo
       uses: actions/checkout@v4
       with:
         # Use provided ref for manual run, else use the event ref
         ref: ${{ inputs.target_ref || github.ref }}
+        fetch-depth: 0
+        clean: true
+
+    - name: Show git context (update-version)
+      run: |
+        echo "event=${{ github.event_name }}"
+        echo "github.ref=${{ github.ref }}"
+        echo "release.tag_name=${{ github.event.release.tag_name || '' }}"
+        git rev-parse --short HEAD
+        git show -s --format='%H %D %s'
 
     - name: Determine release/base versions
       id: set_version
       run: |
-        CURRENT_TAG_VERSION="${GITHUB_REF##refs/tags/v}"
+        RAW_TAG_NAME="${{ github.event.release.tag_name || '' }}"
+        if [ -z "$RAW_TAG_NAME" ]; then
+          RAW_TAG_NAME="${GITHUB_REF##refs/tags/}"
+        fi
+        CURRENT_TAG_VERSION="${RAW_TAG_NAME#v}"
         INPUT_VERSION="${{ inputs.release_version }}"
         if [ "${{ github.event_name }}" = "release" ]; then
           USE_VERSION="$CURRENT_TAG_VERSION"
@@ -51,27 +68,31 @@ jobs:
         echo "base_version=$(python -c 'from utils.release import get_version; print(get_version())')" >> $GITHUB_ENV
         echo "release_version=$USE_VERSION" >> $GITHUB_OUTPUT
         echo "base_version=$(python -c 'from utils.release import get_version; print(get_version())')" >> $GITHUB_OUTPUT
+        echo "resolved_release_version=$USE_VERSION"
 
     - name: Update version (idempotent)
       if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
       run: |
+        RELEASE_VERSION="${{ steps.set_version.outputs.release_version }}"
+        BASE_VERSION="${{ steps.set_version.outputs.base_version }}"
+
         # Guard: ensure release_version is set; if not, skip to avoid calling release.py with empty arg
-        if [ -z "${{ env.release_version }}" ]; then
+        if [ -z "$RELEASE_VERSION" ]; then
           echo "release_version is empty; skipping version update.";
           exit 0
         fi
 
-        if [ "${{ env.release_version }}" = "${{ env.base_version }}" ]; then
-          echo "Version already ${env.release_version}; skipping bump.";
+        if [ "$RELEASE_VERSION" = "$BASE_VERSION" ]; then
+          echo "Version already $RELEASE_VERSION; skipping bump.";
         else
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          python utils/release.py --update_version "${{ env.release_version }}"
+          python utils/release.py --update_version "$RELEASE_VERSION"
           if git diff --quiet; then
             echo "No changes after version update.";
           else
             git add .
-            git commit -m "Update version from ${{ env.base_version }} to ${{ env.release_version }}"
+            git commit -m "Update version from $BASE_VERSION to $RELEASE_VERSION"
             # Only push to master/default branch on release event (assuming main)
             if [ "${{ github.event_name }}" = "release" ]; then
               git pull --rebase origin main
@@ -98,6 +119,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          fetch-depth: 0
+          clean: true
+
+      - name: Show git context (release-build)
+        run: |
+          echo "event=${{ github.event_name }}"
+          echo "github.ref=${{ github.ref }}"
+          echo "release.tag_name=${{ github.event.release.tag_name || '' }}"
+          echo "target_version=${{ needs.update-version.outputs.release_version }}"
+          git rev-parse --short HEAD
+          git show -s --format='%H %D %s'
+          git tag --points-at HEAD || true
       
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -111,10 +144,82 @@ jobs:
           pip install -U torch --index-url https://download.pytorch.org/whl/cpu
           pip install -U transformers safetensors peft huggingface_hub numpy Pillow
 
+      - name: Clean old build metadata
+        run: |
+          rm -rf dist build
+          rm -rf src/*.egg-info
+
+      - name: Sync package version for build
+        run: |
+          TARGET_VERSION="${{ needs.update-version.outputs.release_version }}"
+          if [ -z "$TARGET_VERSION" ]; then
+            echo "release_version is empty; aborting to avoid publishing wrong version."
+            exit 1
+          fi
+          python utils/release.py --update_version "$TARGET_VERSION"
+          echo "Version synchronized to $TARGET_VERSION"
+          grep -E '^__version__' src/anime_seg/__init__.py
+          grep -E '^\s*version\s*=' setup.py
+
+      - name: Verify version matches release tag
+        run: |
+          TAG_VERSION="${{ needs.update-version.outputs.release_version }}"
+          INIT_VERSION=$(python -c "import re, pathlib; t=pathlib.Path('src/anime_seg/__init__.py').read_text(encoding='utf-8'); print(re.search(r'__version__\\s*=\\s*[\"\']([^\"\']+)[\"\']', t).group(1))")
+          SETUP_VERSION=$(python -c "import re, pathlib; t=pathlib.Path('setup.py').read_text(encoding='utf-8'); print(re.search(r'version\\s*=\\s*[\"\']([^\"\']+)[\"\']', t).group(1))")
+          echo "tag=$TAG_VERSION init=$INIT_VERSION setup=$SETUP_VERSION"
+          test "$TAG_VERSION" = "$INIT_VERSION"
+          test "$TAG_VERSION" = "$SETUP_VERSION"
+
       - name: Build distributions
         run: |
           python -m build
           ls -l dist
+
+      - name: Verify built artifact version
+        run: |
+          TAG_VERSION="${{ needs.update-version.outputs.release_version }}"
+          python - <<'PY'
+          import glob
+          import os
+          import re
+          import sys
+          import zipfile
+
+          tag = "${{ needs.update-version.outputs.release_version }}"
+          files = glob.glob("dist/*")
+          if not files:
+              print("No artifacts found in dist/")
+              sys.exit(1)
+
+          for path in files:
+            name = os.path.basename(path)
+              m = re.search(r"anime_seg-([0-9][A-Za-z0-9._+-]*)", name)
+              if not m:
+                  print(f"Could not parse version from artifact: {name}")
+                  sys.exit(1)
+              version = m.group(1)
+              print(f"artifact={name} parsed_version={version}")
+              if version != tag:
+                  print(f"Version mismatch: expected {tag}, got {version}")
+                  sys.exit(1)
+
+            if name.endswith('.whl'):
+              with zipfile.ZipFile(path) as zf:
+                meta_name = next((n for n in zf.namelist() if n.endswith('.dist-info/METADATA')), None)
+                if not meta_name:
+                  print(f"No METADATA in wheel: {name}")
+                  sys.exit(1)
+                metadata = zf.read(meta_name).decode('utf-8', errors='replace')
+                m_meta = re.search(r'^Version:\s*(.+)$', metadata, re.MULTILINE)
+                if not m_meta:
+                  print(f"No Version field in METADATA: {name}")
+                  sys.exit(1)
+                meta_version = m_meta.group(1).strip()
+                print(f"wheel_metadata_version={meta_version}")
+                if meta_version != tag:
+                  print(f"Wheel METADATA mismatch: expected {tag}, got {meta_version}")
+                  sys.exit(1)
+          PY
 
       - name: Publish to Test PyPI
         if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
@@ -129,7 +234,7 @@ jobs:
         run: |
           python -c "import glob,sys; print('dist:',glob.glob('dist/*'))" || true
           pip install --no-cache-dir dist/*.whl
-          python -c "from anime_seg import *" 
+          python -c "import anime_seg; print('installed_anime_seg_version=', anime_seg.__version__)"
 
       - name: Publish to PyPI
         if: github.event_name == 'release'
@@ -137,4 +242,4 @@ jobs:
         with:
           verbose: true
           attestations: false
-          skip-existing: true
+          skip-existing: false
