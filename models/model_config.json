@@ -15,7 +15,7 @@
       "TrainImageSize": 768,
       "Version": 3,
       "Architecture": "mask2former",
-      "BaseModel": "models/mask2former_merged_config",
+      "BaseModel": "facebook/mask2former-swin-base-ade-semantic",
       "Config": {
         "merged_full": true
       }
