@@ -99,7 +99,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         device: Optional[str] = None,
         base_model: str = "facebook/mask2former-swin-base-ade-semantic",
         config_name: str = "models/model_config.json",
-        remove_bg: bool = True,
+        remove_bg: bool = False,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.remove_bg = remove_bg

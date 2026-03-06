@@ -20,6 +20,7 @@ class AnimeSegPipeline:
         device: Optional[str] = None,
         base_model: str = "",
         config_name: str = "models/model_config.json",
+        remove_bg: bool = False,
     ) -> None:
         if (
             architecture == "dinov2"
@@ -46,6 +47,7 @@ class AnimeSegPipeline:
                 device=device,
                 base_model=base_model or "facebook/mask2former-swin-base-ade-semantic",
                 config_name=config_name,
+                remove_bg=remove_bg,
             )
         else:
             self._impl = self.from_dinoV2(
@@ -54,6 +56,7 @@ class AnimeSegPipeline:
                 token=token,
                 device=device,
                 config_name=config_name,
+                remove_bg=remove_bg,
             )
 
     @classmethod
@@ -64,20 +67,19 @@ class AnimeSegPipeline:
         token: Optional[str] = None,
         device: Optional[str] = None,
         config_name: str = "models/model_config.json",
+        remove_bg: bool = False,
     ) -> DinoV2AnimeSegPipeline:
-        if device is not None:
-            warnings.warn(
-                "`device` passed to AnimeSegPipeline.from_dinoV2(...) is ignored. "
-                "Please call `.to(\"cuda\")` or `.to(device=\"cuda\")` after pipeline creation.",
-                UserWarning,
-            )
-        return DinoV2AnimeSegPipeline(
+        pipe = DinoV2AnimeSegPipeline(
             repo_id=repo_id,
             filename=filename,
             token=token,
             device=None,
             config_name=config_name,
+            remove_bg=remove_bg,
         )
+        if device is not None:
+            pipe.to(device)
+        return pipe
 
     @classmethod
     def from_mask2former(
@@ -88,21 +90,20 @@ class AnimeSegPipeline:
         device: Optional[str] = None,
         base_model: str = "facebook/mask2former-swin-base-ade-semantic",
         config_name: str = "models/model_config.json",
+        remove_bg: bool = False,
     ) -> Mask2FormerAnimeSegPipeline:
-        if device is not None:
-            warnings.warn(
-                "`device` passed to AnimeSegPipeline.from_mask2former(...) is ignored. "
-                "Please call `.to(\"cuda\")` or `.to(device=\"cuda\")` after pipeline creation.",
-                UserWarning,
-            )
-        return Mask2FormerAnimeSegPipeline(
+        pipe = Mask2FormerAnimeSegPipeline(
             repo_id=repo_id,
             filename=filename,
             token=token,
             device=None,
             base_model=base_model,
             config_name=config_name,
+            remove_bg=remove_bg,
         )
+        if device is not None:
+            pipe.to(device)
+        return pipe
 
     @classmethod
     def from_bg_remover(
@@ -112,19 +113,15 @@ class AnimeSegPipeline:
         token: Optional[str] = None,
         device: Optional[str] = None,
     ):
-        if device is not None:
-            warnings.warn(
-                "`device` passed to AnimeSegPipeline.from_bg_remover(...) is ignored. "
-                "Please call `.to(\"cuda\")` or `.to(device=\"cuda\")` after pipeline creation.",
-                UserWarning,
-            )
-
         if filename and os.path.isfile(filename):
             ckpt_path = filename
         else:
             ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
             
-        return BgRemover.from_single_file(ckpt_path=ckpt_path)
+        pipe = BgRemover.from_single_file(ckpt_path=ckpt_path, device="cpu")
+        if device is not None:
+            pipe.to(device)
+        return pipe
 
     def __call__(self, image, *args, **kwargs):
         return self._impl(image, *args, **kwargs)

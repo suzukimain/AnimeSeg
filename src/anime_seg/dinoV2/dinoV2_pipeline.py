@@ -88,8 +88,13 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         token: Optional[str] = None,
         device: Optional[str] = None,
         config_name: str = "models/model_config.json",
+        remove_bg: bool = False,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.remove_bg = remove_bg
+        if self.remove_bg:
+            from ..remove_bg.bg_remover_pipeline import BgRemover
+            self.bg_remover = BgRemover.from_single_file(device=self.device)
         self.num_classes = NUM_CLASSES
 
         model_meta = self._resolve_model_meta(
@@ -296,6 +301,10 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             img = image.convert('RGB')
         
         original_size = img.size
+
+        if getattr(self, "remove_bg", False) and hasattr(self, "bg_remover"):
+            img = self.bg_remover(img)
+
         target_size = (
             int(width) if width is not None else original_size[0],
             int(height) if height is not None else original_size[1],
@@ -331,6 +340,8 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             return self
         self.device = str(target)
         self.model.to(target)
+        if getattr(self, "remove_bg", False) and hasattr(self, "bg_remover"):
+            self.bg_remover.to(target)
         return self
 
 
