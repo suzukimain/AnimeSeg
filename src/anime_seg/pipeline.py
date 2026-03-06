@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import warnings
 from typing import Optional
 
+from huggingface_hub import hf_hub_download
+
 from .dinoV2.dinoV2_pipeline import DinoV2AnimeSegPipeline
 from .mask2former.mask2former_pipeline import Mask2FormerAnimeSegPipeline
-
+from .remove_bg.bg_remover_pipeline import BgRemover
 
 class AnimeSegPipeline:
     def __init__(
@@ -29,7 +32,7 @@ class AnimeSegPipeline:
         ):
             warnings.warn(
                 "AnimeSegPipeline() default constructor is deprecated and will be removed in a future release. "
-                "Please use AnimeSegPipeline.from_dinoV2() or AnimeSegPipeline.from_mask2former().",
+                "Please use AnimeSegPipeline.from_dinoV2(), AnimeSegPipeline.from_mask2former(), or AnimeSegPipeline.from_bg_remover().",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -101,6 +104,28 @@ class AnimeSegPipeline:
             config_name=config_name,
         )
 
+    @classmethod
+    def from_bg_remover(
+        cls,
+        repo_id: str = "suzukimain/AnimeSeg",
+        filename: str = "models/remove_bg/BgRemover.safetensors",
+        token: Optional[str] = None,
+        device: Optional[str] = None,
+    ):
+        if device is not None:
+            warnings.warn(
+                "`device` passed to AnimeSegPipeline.from_bg_remover(...) is ignored. "
+                "Please call `.to(\"cuda\")` or `.to(device=\"cuda\")` after pipeline creation.",
+                UserWarning,
+            )
+
+        if filename and os.path.isfile(filename):
+            ckpt_path = filename
+        else:
+            ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
+            
+        return BgRemover.from_single_file(ckpt_path=ckpt_path)
+
     def __call__(self, image, *args, **kwargs):
         return self._impl(image, *args, **kwargs)
 
@@ -108,4 +133,4 @@ class AnimeSegPipeline:
         return getattr(self._impl, name)
 
 
-__all__ = ["AnimeSegPipeline", "DinoV2AnimeSegPipeline", "Mask2FormerAnimeSegPipeline"]
+__all__ = ["AnimeSegPipeline", "DinoV2AnimeSegPipeline", "Mask2FormerAnimeSegPipeline", "BgRemover"]

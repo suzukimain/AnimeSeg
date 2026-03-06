@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="anime_seg",
-    version="0.2.5",
+    version="0.3.4",
     description="Anime Character Segmentation with DINOv2",
     long_description=open("README.md").read() if open("README.md").read() else "",
     long_description_content_type="text/markdown",
@@ -21,6 +21,7 @@ setup(
         "huggingface_hub",
         "safetensors",
         "peft",
+        "opencv-python",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
