@@ -192,33 +192,38 @@ jobs:
               sys.exit(1)
 
           for path in files:
-            name = os.path.basename(path)
+              name = os.path.basename(path)
               m = re.search(r"anime_seg-([0-9][A-Za-z0-9._+-]*)", name)
               if not m:
                   print(f"Could not parse version from artifact: {name}")
                   sys.exit(1)
               version = m.group(1)
+              if version.endswith('.tar.gz'):
+                  version = version[:-len('.tar.gz')]
+              elif '.whl' in name:
+                  version = version.split('-')[0]
+              
               print(f"artifact={name} parsed_version={version}")
               if version != tag:
                   print(f"Version mismatch: expected {tag}, got {version}")
                   sys.exit(1)
 
-            if name.endswith('.whl'):
-              with zipfile.ZipFile(path) as zf:
-                meta_name = next((n for n in zf.namelist() if n.endswith('.dist-info/METADATA')), None)
-                if not meta_name:
-                  print(f"No METADATA in wheel: {name}")
-                  sys.exit(1)
-                metadata = zf.read(meta_name).decode('utf-8', errors='replace')
-                m_meta = re.search(r'^Version:\s*(.+)$', metadata, re.MULTILINE)
-                if not m_meta:
-                  print(f"No Version field in METADATA: {name}")
-                  sys.exit(1)
-                meta_version = m_meta.group(1).strip()
-                print(f"wheel_metadata_version={meta_version}")
-                if meta_version != tag:
-                  print(f"Wheel METADATA mismatch: expected {tag}, got {meta_version}")
-                  sys.exit(1)
+              if name.endswith('.whl'):
+                  with zipfile.ZipFile(path) as zf:
+                      meta_name = next((n for n in zf.namelist() if n.endswith('.dist-info/METADATA')), None)
+                      if not meta_name:
+                          print(f"No METADATA in wheel: {name}")
+                          sys.exit(1)
+                      metadata = zf.read(meta_name).decode('utf-8', errors='replace')
+                      m_meta = re.search(r'^Version:\s*(.+)$', metadata, re.MULTILINE)
+                      if not m_meta:
+                          print(f"No Version field in METADATA: {name}")
+                          sys.exit(1)
+                      meta_version = m_meta.group(1).strip()
+                      print(f"wheel_metadata_version={meta_version}")
+                      if meta_version != tag:
+                          print(f"Wheel METADATA mismatch: expected {tag}, got {meta_version}")
+                          sys.exit(1)
           PY
 
       - name: Publish to Test PyPI
