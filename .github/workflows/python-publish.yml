@@ -41,7 +41,11 @@ jobs:
     - name: Determine release/base versions
       id: set_version
       run: |
-        CURRENT_TAG_VERSION="${GITHUB_REF##refs/tags/v}"
+        RAW_TAG_NAME="${{ github.event.release.tag_name || '' }}"
+        if [ -z "$RAW_TAG_NAME" ]; then
+          RAW_TAG_NAME="${GITHUB_REF##refs/tags/}"
+        fi
+        CURRENT_TAG_VERSION="${RAW_TAG_NAME#v}"
         INPUT_VERSION="${{ inputs.release_version }}"
         if [ "${{ github.event_name }}" = "release" ]; then
           USE_VERSION="$CURRENT_TAG_VERSION"
@@ -117,6 +121,11 @@ jobs:
           pip install -U torch --index-url https://download.pytorch.org/whl/cpu
           pip install -U transformers safetensors peft huggingface_hub numpy Pillow
 
+      - name: Clean old build metadata
+        run: |
+          rm -rf dist build
+          rm -rf src/*.egg-info
+
       - name: Sync package version for build
         run: |
           TARGET_VERSION="${{ needs.update-version.outputs.release_version }}"
@@ -129,10 +138,46 @@ jobs:
           grep -E '^__version__' src/anime_seg/__init__.py
           grep -E '^\s*version\s*=' setup.py
 
+      - name: Verify version matches release tag
+        run: |
+          TAG_VERSION="${{ needs.update-version.outputs.release_version }}"
+          INIT_VERSION=$(python -c "import re, pathlib; t=pathlib.Path('src/anime_seg/__init__.py').read_text(encoding='utf-8'); print(re.search(r'__version__\\s*=\\s*[\"\']([^\"\']+)[\"\']', t).group(1))")
+          SETUP_VERSION=$(python -c "import re, pathlib; t=pathlib.Path('setup.py').read_text(encoding='utf-8'); print(re.search(r'version\\s*=\\s*[\"\']([^\"\']+)[\"\']', t).group(1))")
+          echo "tag=$TAG_VERSION init=$INIT_VERSION setup=$SETUP_VERSION"
+          test "$TAG_VERSION" = "$INIT_VERSION"
+          test "$TAG_VERSION" = "$SETUP_VERSION"
+
       - name: Build distributions
         run: |
           python -m build
           ls -l dist
+
+      - name: Verify built artifact version
+        run: |
+          TAG_VERSION="${{ needs.update-version.outputs.release_version }}"
+          python - <<'PY'
+          import glob
+          import re
+          import sys
+
+          tag = "${{ needs.update-version.outputs.release_version }}"
+          files = glob.glob("dist/*")
+          if not files:
+              print("No artifacts found in dist/")
+              sys.exit(1)
+
+          for path in files:
+              name = path.split("/")[-1]
+              m = re.search(r"anime_seg-([0-9][A-Za-z0-9._+-]*)", name)
+              if not m:
+                  print(f"Could not parse version from artifact: {name}")
+                  sys.exit(1)
+              version = m.group(1)
+              print(f"artifact={name} parsed_version={version}")
+              if version != tag:
+                  print(f"Version mismatch: expected {tag}, got {version}")
+                  sys.exit(1)
+          PY
 
       - name: Publish to Test PyPI
         if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
@@ -155,4 +200,4 @@ jobs:
         with:
           verbose: true
           attestations: false
-          skip-existing: true
+          skip-existing: false
