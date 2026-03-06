@@ -28,6 +28,9 @@ permissions:
 jobs:
   update-version:
     runs-on: ubuntu-22.04
+    outputs:
+      release_version: ${{ steps.set_version.outputs.release_version }}
+      base_version: ${{ steps.set_version.outputs.base_version }}
     steps:
     - name: Checkout Repo
       uses: actions/checkout@v4
@@ -55,23 +58,26 @@ jobs:
     - name: Update version (idempotent)
       if: github.event_name == 'release' || inputs.publish_to_pypi == 'true'
       run: |
+        RELEASE_VERSION="${{ steps.set_version.outputs.release_version }}"
+        BASE_VERSION="${{ steps.set_version.outputs.base_version }}"
+
         # Guard: ensure release_version is set; if not, skip to avoid calling release.py with empty arg
-        if [ -z "${{ env.release_version }}" ]; then
+        if [ -z "$RELEASE_VERSION" ]; then
           echo "release_version is empty; skipping version update.";
           exit 0
         fi
 
-        if [ "${{ env.release_version }}" = "${{ env.base_version }}" ]; then
-          echo "Version already ${env.release_version}; skipping bump.";
+        if [ "$RELEASE_VERSION" = "$BASE_VERSION" ]; then
+          echo "Version already $RELEASE_VERSION; skipping bump.";
         else
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          python utils/release.py --update_version "${{ env.release_version }}"
+          python utils/release.py --update_version "$RELEASE_VERSION"
           if git diff --quiet; then
             echo "No changes after version update.";
           else
             git add .
-            git commit -m "Update version from ${{ env.base_version }} to ${{ env.release_version }}"
+            git commit -m "Update version from $BASE_VERSION to $RELEASE_VERSION"
             # Only push to master/default branch on release event (assuming main)
             if [ "${{ github.event_name }}" = "release" ]; then
               git pull --rebase origin main
@@ -110,6 +116,18 @@ jobs:
           pip install -U setuptools twine build
           pip install -U torch --index-url https://download.pytorch.org/whl/cpu
           pip install -U transformers safetensors peft huggingface_hub numpy Pillow
+
+      - name: Sync package version for build
+        run: |
+          TARGET_VERSION="${{ needs.update-version.outputs.release_version }}"
+          if [ -z "$TARGET_VERSION" ]; then
+            echo "release_version is empty; aborting to avoid publishing wrong version."
+            exit 1
+          fi
+          python utils/release.py --update_version "$TARGET_VERSION"
+          echo "Version synchronized to $TARGET_VERSION"
+          grep -E '^__version__' src/anime_seg/__init__.py
+          grep -E '^\s*version\s*=' setup.py
 
       - name: Build distributions
         run: |
