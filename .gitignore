@@ -181,4 +181,4 @@ cython_debug/
 .cursorindexingignore
 
 tmp/
-models/
+models2/
