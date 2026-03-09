@@ -38,6 +38,11 @@ permissions:
 jobs:
   update-config:
     runs-on: ubuntu-latest
+    environment:
+      name: hf_push
+
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
     steps:
       - name: Checkout
@@ -48,16 +53,60 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Update model_config.json
+      - name: Download config.json from Hugging Face
+        run: |
+          python -m pip install --upgrade huggingface_hub
+          python - <<'PY'
+          import os
+          from huggingface_hub import hf_hub_download
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              raise RuntimeError("HF_TOKEN is not set")
+
+          downloaded = hf_hub_download(
+              repo_id="suzukimain/AnimeSeg",
+              filename="config.json",
+              token=token,
+              repo_type="model",
+          )
+          with open(downloaded, "r", encoding="utf-8") as src, open("config.json", "w", encoding="utf-8") as dst:
+              dst.write(src.read())
+          print("Downloaded config.json from HF")
+          PY
+
+      - name: Update config.json
         run: |
           python utils/update_hf_model_config.py \
-            --config-path models/model_config.json \
+            --config-path config.json \
             --file-path "${{ github.event.inputs.file_path }}" \
             --train-image-size "${{ github.event.inputs.train_image_size }}" \
             --version "${{ github.event.inputs.version }}" \
             --architecture "${{ github.event.inputs.architecture }}" \
             --base-model "${{ github.event.inputs.base_model }}" \
             --config-json '${{ github.event.inputs.config_json }}'
+
+      - name: Upload config.json to Hugging Face
+        run: |
+          python -m pip install --upgrade huggingface_hub
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              raise RuntimeError("HF_TOKEN is not set")
+
+          api = HfApi(token=token)
+          api.upload_file(
+              path_or_fileobj="config.json",
+              path_in_repo="config.json",
+              repo_id="suzukimain/AnimeSeg",
+              repo_type="model",
+              commit_message="chore: sync config.json from GitHub Actions",
+          )
+          print("Uploaded config.json to suzukimain/AnimeSeg")
+          PY
 
       - name: Show status
         run: |
@@ -67,12 +116,3 @@ jobs:
           echo "- Version: ${{ github.event.inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Architecture: ${{ github.event.inputs.architecture }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- BaseModel: ${{ github.event.inputs.base_model }}" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add models/model_config.json
-          git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "chore: update model_config.json via workflow"
-          git push

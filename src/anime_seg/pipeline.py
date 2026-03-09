@@ -19,7 +19,7 @@ class AnimeSegPipeline:
         token: Optional[str] = None,
         device: Optional[str] = None,
         base_model: str = "",
-        config_name: str = "models/model_config.json",
+        config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> None:
         if (
@@ -29,7 +29,7 @@ class AnimeSegPipeline:
             and token is None
             and device is None
             and base_model == ""
-            and config_name == "models/model_config.json"
+            and config_name == "config.json"
         ):
             warnings.warn(
                 "AnimeSegPipeline() default constructor is deprecated and will be removed in a future release. "
@@ -66,7 +66,7 @@ class AnimeSegPipeline:
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        config_name: str = "models/model_config.json",
+        config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> DinoV2AnimeSegPipeline:
         pipe = DinoV2AnimeSegPipeline(
@@ -89,7 +89,7 @@ class AnimeSegPipeline:
         token: Optional[str] = None,
         device: Optional[str] = None,
         base_model: str = "facebook/mask2former-swin-base-ade-semantic",
-        config_name: str = "models/model_config.json",
+        config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> Mask2FormerAnimeSegPipeline:
         pipe = Mask2FormerAnimeSegPipeline(

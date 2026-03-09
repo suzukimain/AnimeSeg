@@ -93,7 +93,7 @@ models/anime_seg_{アーキテクチャ}_v{バージョン}.safetensors
 - `models/anime_seg_mask2former_v3.safetensors`
 
 解決順序:
-1. `models/model_config.json`
+1. `config.json`
 2. フォールバックで `models/anime_seg_{architecture}_v{最大バージョン}.{拡張子}`
 
 ## セグメンテーションクラス
