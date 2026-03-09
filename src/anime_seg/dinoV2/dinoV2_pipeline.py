@@ -4,7 +4,6 @@ import json
 from PIL import Image
 from huggingface_hub import list_repo_files, hf_hub_download, PyTorchModelHubMixin
 import re
-import os
 from pathlib import Path
 from typing import Union, Optional, Dict, List, Tuple
 from safetensors.torch import load_file
@@ -87,7 +86,7 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        config_name: str = "models/model_config.json",
+        config_name: str = "config.json",
         remove_bg: bool = False,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -103,12 +102,22 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             filename=filename,
             config_name=config_name,
         )
+        if not model_meta:
+            raise RuntimeError(
+                f"Failed to load model metadata from Hugging Face config '{config_name}'. "
+                "config.json must be available on the HF repo before starting inference."
+            )
         config_obj = model_meta.get("Config", {}) if isinstance(model_meta, dict) else {}
         if not isinstance(config_obj, dict):
             config_obj = {}
         merged_full = bool(config_obj.get("merged_full", False))
 
         selected_filename = filename or str(model_meta.get("FilePath", ""))
+        if not selected_filename:
+            raise RuntimeError(
+                "No FilePath found in Hugging Face config.json for requested model. "
+                "Please update config.json on HF first."
+            )
         self.train_image_size = int(model_meta.get("TrainImageSize", 512))
 
         local_checkpoint_path = self._resolve_local_checkpoint_path(selected_filename)
@@ -116,8 +125,6 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
             checkpoint_path = local_checkpoint_path
             print(f"Loading from local file: {checkpoint_path}")
         else:
-            if not selected_filename:
-                selected_filename = self._auto_detect_latest_model(repo_id, token)
             print(f"Downloading model: {repo_id}/{selected_filename}")
             checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
 
@@ -200,10 +207,11 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str,
     ) -> Dict:
         try:
-            if os.path.isfile(config_name):
-                config_path = config_name
-            else:
-                config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+        except Exception:
+            return {}
+
+        try:
             with open(config_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
         except Exception:
@@ -229,7 +237,7 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         return dino_items[0]
     
     def _auto_detect_latest_model(self, repo_id: str, token: Optional[str]) -> str:
-        """Fallback when model_config.json is unavailable."""
+        """Fallback when config.json is unavailable."""
         files = list_repo_files(repo_id=repo_id, token=token)
 
         pattern = re.compile(r"models/anime_seg_dinov2_v(\d+)\.([A-Za-z0-9]+)$")
@@ -243,7 +251,7 @@ class DinoV2AnimeSegPipeline(PyTorchModelHubMixin):
         if not candidates:
             raise RuntimeError(
                 "File management system appears to be broken. "
-                "Failed to resolve model from model_config.json and fallback file pattern. "
+                "Failed to resolve model from config.json and fallback file pattern. "
                 "Please try loading with explicit repo_id and filename."
             )
 

@@ -136,7 +136,7 @@ def _merge_one(entry: Dict, source_pipe, model_path: Path) -> str | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Merge AnimeSeg checkpoints into full single-file safetensors and validate similarity.")
-    parser.add_argument("--config", default="models/model_config.json", help="Path to model config JSON")
+    parser.add_argument("--config", default="config.json", help="Path to model config JSON")
     parser.add_argument("--image", default="tmp/img/source.png", help="Validation image path")
     parser.add_argument("--min-miou", type=float, default=0.995, help="Minimum mIoU between source and merged outputs")
     parser.add_argument("--min-acc", type=float, default=0.995, help="Minimum pixel accuracy between source and merged outputs")

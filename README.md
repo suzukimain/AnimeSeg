@@ -90,7 +90,7 @@ Example:
 - `models/anime_seg_mask2former_v3.safetensors`
 
 Resolution order:
-1. `models/model_config.json`
+1. `config.json`
 2. fallback scan by `models/anime_seg_{architecture}_v{max_version}.{ext}`
 
 ## Segmentation Classes and Mask Colors

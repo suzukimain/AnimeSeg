@@ -62,8 +62,8 @@ def _upsert(models: List[Dict[str, Any]], entry: Dict[str, Any]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Update model_config.json")
-    parser.add_argument("--config-path", required=True, help="Path to model_config.json")
+    parser = argparse.ArgumentParser(description="Update config.json")
+    parser.add_argument("--config-path", required=True, help="Path to config.json")
     parser.add_argument("--file-path", required=True)
     parser.add_argument("--train-image-size", required=True, type=int)
     parser.add_argument("--version", required=True, type=int)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -98,7 +97,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         token: Optional[str] = None,
         device: Optional[str] = None,
         base_model: str = "facebook/mask2former-swin-base-ade-semantic",
-        config_name: str = "models/model_config.json",
+        config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -113,6 +112,11 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
             filename=filename,
             config_name=config_name,
         )
+        if not model_meta:
+            raise RuntimeError(
+                f"Failed to load model metadata from Hugging Face config '{config_name}'. "
+                "config.json must be available on the HF repo before starting inference."
+            )
 
         config_obj = model_meta.get("Config", {}) if isinstance(model_meta, dict) else {}
         if not isinstance(config_obj, dict):
@@ -122,6 +126,11 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         self.id_to_color = _build_id_to_color(self.num_classes)
 
         selected_filename = filename or model_meta.get("FilePath", "")
+        if not selected_filename:
+            raise RuntimeError(
+                "No FilePath found in Hugging Face config.json for requested model. "
+                "Please update config.json on HF first."
+            )
         selected_base_model = model_meta.get("BaseModel", base_model)
         self.train_image_size = int(model_meta.get("TrainImageSize", 768))
 
@@ -129,8 +138,6 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         if local_checkpoint_path is not None:
             checkpoint_path = local_checkpoint_path
         else:
-            if not selected_filename:
-                selected_filename = self._auto_detect_latest_model(repo_id, token)
             checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
 
         inferred_merged_full = self._infer_merged_full_from_checkpoint(checkpoint_path)
@@ -182,7 +189,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         if not candidates:
             raise RuntimeError(
                 "File management system appears to be broken. "
-                "Failed to resolve model from model_config.json and fallback file pattern. "
+                "Failed to resolve model from config.json and fallback file pattern. "
                 "Please try loading with explicit repo_id and filename."
             )
         candidates.sort(reverse=True)
@@ -196,10 +203,11 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str,
     ) -> Dict:
         try:
-            if os.path.isfile(config_name):
-                config_path = config_name
-            else:
-                config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+        except Exception:
+            return {}
+
+        try:
             with open(config_path, "r", encoding="utf-8") as file:
                 data = json.load(file)
         except Exception:
