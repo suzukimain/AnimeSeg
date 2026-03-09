@@ -50,14 +50,14 @@ jobs:
               raise RuntimeError("HF_REPO_ID is not set")
 
           api = HfApi(token=token)
-            api.upload_file(
+          api.upload_file(
               path_or_fileobj="README.md",
               path_in_repo="README.md",
               repo_id=repo_id,
               repo_type="model",
               commit_message="chore: sync README.md from GitHub",
-            )
-            print("uploaded: README.md")
+          )
+          print("uploaded: README.md")
           PY
 
       - name: Summary
