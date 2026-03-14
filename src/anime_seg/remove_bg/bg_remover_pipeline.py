@@ -62,12 +62,14 @@ class BgRemover:
         self.model.to(self.device)
         return self
 
-    def __call__(self, image: Image.Image, use_amp=True, s=1024, return_type="pil", bg_color=(255, 255, 255)):
+    def __call__(self, image: Image.Image, use_amp=True, s=1024, return_type="pil", bg_color=(255, 255, 255), return_mask=False, output_overlay=False):
         if isinstance(image, str):
             image = Image.open(image)
         elif not isinstance(image, Image.Image):
             raise ValueError(f"Input must be a PIL Image or a file path.:{type(image)}")
-        input_img = np.array(image.convert("RGB"))
+        
+        image_rgb = image.convert("RGB")
+        input_img = np.array(image_rgb)
         input_img_norm = (input_img / 255.0).astype(np.float32)
         h0, w0 = input_img_norm.shape[:2]
         
@@ -92,8 +94,27 @@ class BgRemover:
             pred = pred.cpu().numpy()[0]
             pred = np.transpose(pred, (1, 2, 0))
             pred = pred[ph // 2:ph // 2 + h, pw // 2:pw // 2 + w]
-            mask = cv2.resize(pred, (w0, h0))[:, :, np.newaxis]
+            mask = cv2.resize(pred, (w0, h0))
+            if len(mask.shape) == 2:
+                mask = mask[:, :, np.newaxis]
             
+        if return_mask:
+            if return_type == "pil":
+                return Image.fromarray((mask.squeeze() * 255).astype(np.uint8))
+            return mask
+
+        if output_overlay:
+            # Create overlay: 60% mask, 40% source
+            source_pil = Image.fromarray(input_img)
+            mask_rgb = cv2.cvtColor((mask * 255).astype(np.uint8), cv2.COLOR_GRAY2RGB)
+            mask_pil = Image.fromarray(mask_rgb)
+            overlay = Image.blend(source_pil, mask_pil, 0.6)
+            
+            if return_type == "pil":
+                return overlay
+            return np.array(overlay)
+
+        # Cut background using mask
         fgImg = (mask * input_img + (1 - mask) * np.array(bg_color)).astype(np.uint8)
         
         if return_type == "pil":
