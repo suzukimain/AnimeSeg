@@ -246,14 +246,21 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         image: Union[str, Image.Image],
         width: Optional[int] = None,
         height: Optional[int] = None,
+        output_overlay: bool = False,
     ) -> Image.Image:
         if isinstance(image, str):
-            img = Image.open(image).convert("RGB")
+            source_img = Image.open(image).convert("RGB")
         else:
-            img = image.convert("RGB")
+            source_img = image.convert("RGB")
 
+        img = source_img
         if getattr(self, "remove_bg", False) and hasattr(self, "bg_remover"):
-            img = self.bg_remover(img)
+            # Get mask from bg_remover and cut background via OpenCV/Numpy logic
+            mask = self.bg_remover(img, return_mask=True, return_type="numpy")
+            img_np = np.array(img)
+            bg_color = np.array([255, 255, 255], dtype=np.uint8)
+            img_np = (mask * img_np + (1 - mask) * bg_color).astype(np.uint8)
+            img = Image.fromarray(img_np)
 
         original_size = img.size
         target_size = (
@@ -274,7 +281,15 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         for class_id, color in self.id_to_color.items():
             colored[preds == class_id] = color
 
-        return Image.fromarray(colored).resize(target_size, 0)
+        mask_img = Image.fromarray(colored).resize(target_size, 0)
+        
+        if output_overlay:
+            # Create overlay: 60% mask, 40% source
+            source_resized = source_img.resize(target_size, Image.BILINEAR)
+            mask_overlay = mask_img.convert("RGB")
+            return Image.blend(source_resized, mask_overlay, 0.6)
+            
+        return mask_img
 
     def to(self, *args, **kwargs):
         target = kwargs.get("device")
