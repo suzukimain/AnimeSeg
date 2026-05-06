@@ -37,6 +37,18 @@ no_bg_img = bg_pipe("path/to/image.jpg")
 no_bg_img.save("no_bg_output.png")
 ```
 
+### AnimeSeg-Next
+
+```python
+from anime_seg import AnimeSegNextPipeline
+
+pipe = AnimeSegNextPipeline.from_mask2former().to("cuda")
+mask = pipe("path/to/image.jpg")
+mask.save("output.png")
+```
+
+If the Hugging Face repo is private or gated, pass `token="hf_..."` or set `HF_TOKEN`. When running interactively, the loader will prompt for a token after an auth failure.
+
 `AnimeSegPipeline()` default constructor is deprecated. Use `from_mask2former()`, `from_dinoV2()`, or `from_bg_remover()`.
 
 ## Optional: output size
@@ -92,6 +104,98 @@ Example:
 Resolution order:
 1. `config.json`
 2. fallback scan by `models/anime_seg_{architecture}_v{max_version}.{ext}`
+
+For AnimeSeg-Next, store Mask2Former metadata in `config.json` under `Config` with `num_classes`, `class_names`, and optionally `class_colors`:
+
+```json
+{
+    "models": [
+        {
+            "FilePath": "models/anime_seg_next_mask2former_v1.safetensors",
+            "TrainImageSize": 768,
+            "Version": 1,
+            "Architecture": "mask2former",
+            "BaseModel": "facebook/mask2former-swin-large-ade-semantic",
+            "Config": {
+                "merged_full": true,
+                "num_classes": 31,
+                "class_names": [
+                    "background",
+                    "back_hair",
+                    "bottomwear",
+                    "ears_left",
+                    "ears_right",
+                    "earwear_left",
+                    "earwear_right",
+                    "eyebrow_left",
+                    "eyebrow_right",
+                    "eyelash_left",
+                    "eyelash_right",
+                    "eyewear_left",
+                    "eyewear_right",
+                    "eyewhite_left",
+                    "eyewhite_right",
+                    "face",
+                    "footwear",
+                    "front_hair",
+                    "handwear",
+                    "headwear",
+                    "irides",
+                    "legwear",
+                    "mouth",
+                    "neck",
+                    "neckwear",
+                    "nose",
+                    "objects",
+                    "tail",
+                    "topwear",
+                    "wings"
+                ],
+                "class_colors": [
+                    [0, 0, 0],
+                    [233, 92, 92],
+                    [92, 233, 126],
+                    [92, 165, 233],
+                    [233, 193, 92],
+                    [197, 92, 233],
+                    [92, 233, 213],
+                    [233, 140, 92],
+                    [140, 92, 233],
+                    [233, 92, 172],
+                    [92, 233, 171],
+                    [171, 92, 233],
+                    [233, 220, 92],
+                    [92, 204, 233],
+                    [233, 92, 107],
+                    [118, 233, 92],
+                    [92, 118, 233],
+                    [233, 155, 92],
+                    [155, 92, 233],
+                    [233, 92, 211],
+                    [92, 233, 145],
+                    [145, 92, 233],
+                    [233, 185, 92],
+                    [92, 185, 233],
+                    [233, 92, 133],
+                    [133, 233, 92],
+                    [92, 133, 233],
+                    [233, 110, 92],
+                    [110, 92, 233],
+                    [233, 92, 239],
+                    [92, 233, 198]
+                ]
+            }
+        }
+    ],
+    "status": {
+        "last_operation": "created",
+        "last_target": "models/anime_seg_next_mask2former_v1.safetensors",
+        "count": 1
+    }
+}
+```
+
+If `num_classes` is omitted, the updater can infer it from the checkpoint's class head. If `class_colors` is omitted, it is generated deterministically to avoid hand-editing mistakes.
 
 ## Segmentation Classes and Mask Colors
 

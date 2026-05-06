@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import getpass
 import re
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -33,18 +35,192 @@ ID_TO_COLOR_12 = {
 }
 
 
+# Explicit 31-class color palette (RGB tuples, indexed 0-30)
+# Provides deterministic, visually distinct colors with LR pairs for contrast
+_EXPLICIT_31CLASS_COLORS = {
+    0: (0, 0, 0),               # background
+    1: (40, 20, 60),            # back_hair
+    2: (0, 102, 204),           # bottomwear
+    3: (100, 180, 220),         # ears_left
+    4: (220, 120, 80),          # ears_right
+    5: (70, 120, 200),          # earwear_left
+    6: (220, 100, 40),          # earwear_right
+    7: (50, 100, 200),          # eyebrow_left
+    8: (200, 80, 30),           # eyebrow_right
+    9: (40, 80, 180),           # eyelash_left
+    10: (180, 60, 20),          # eyelash_right
+    11: (100, 160, 240),        # eyewear_left
+    12: (240, 140, 60),         # eyewear_right
+    13: (200, 240, 255),        # eyewhite_left
+    14: (255, 240, 200),        # eyewhite_right
+    15: (100, 150, 255),        # face
+    16: (32, 64, 96),           # footwear
+    17: (50, 30, 80),           # front_hair
+    18: (192, 192, 192),        # handwear
+    19: (200, 100, 50),         # headwear
+    20: (80, 140, 220),         # irides_left (cool blue)
+    21: (220, 180, 80),         # irides_right (warm gold)
+    22: (204, 51, 102),         # legwear
+    23: (255, 0, 150),          # mouth
+    24: (210, 170, 140),        # neck
+    25: (100, 100, 100),        # neckwear
+    26: (255, 140, 0),          # nose
+    27: (128, 128, 128),        # objects
+    28: (200, 50, 50),          # tail
+    29: (0, 128, 0),            # topwear
+    30: (255, 255, 0),          # wings
+}
+
 def _build_id_to_color(num_classes: int) -> Dict[int, Tuple[int, int, int]]:
+    if num_classes == 31:
+        return _EXPLICIT_31CLASS_COLORS
     if num_classes <= 12:
         return {k: v for k, v in ID_TO_COLOR_12.items() if k < num_classes}
 
     id_to_color = dict(ID_TO_COLOR_12)
-    # Additional classes are rendered as dark gray by default.
     for class_id in range(12, num_classes):
-        id_to_color[class_id] = (64, 64, 64)
+        hue = (class_id * 0.6180339887498949) % 1.0
+        saturation = 0.55
+        value = 0.92
+        r, g, b = _hsv_to_rgb(hue, saturation, value)
+        id_to_color[class_id] = (r, g, b)
     return id_to_color
 
 
+def _hsv_to_rgb(hue: float, saturation: float, value: float) -> Tuple[int, int, int]:
+    import colorsys
+
+    red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
+    return (
+        int(round(red * 255.0)),
+        int(round(green * 255.0)),
+        int(round(blue * 255.0)),
+    )
+
+
+def _normalize_color_triplet(color: Sequence[int]) -> Tuple[int, int, int]:
+    if len(color) != 3:
+        raise ValueError("class_colors entries must be RGB triplets")
+    red, green, blue = (int(c) for c in color)
+    for channel in (red, green, blue):
+        if channel < 0 or channel > 255:
+            raise ValueError("class_colors values must be in 0..255")
+    return red, green, blue
+
+
 class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
+    def _download_hf_file(self, repo_id: str, filename: str, token: Optional[str]) -> str:
+        try:
+            return hf_hub_download(repo_id=repo_id, filename=filename, token=token)
+        except Exception as exc:
+            if token is not None:
+                raise
+            if not self._looks_like_auth_error(exc):
+                raise
+            prompted_token = self._prompt_for_token(repo_id)
+            return hf_hub_download(repo_id=repo_id, filename=filename, token=prompted_token)
+
+    @staticmethod
+    def _looks_like_auth_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(
+            marker in message
+            for marker in (
+                "401",
+                "403",
+                "unauthorized",
+                "authentication",
+                "gated",
+                "token",
+                "private",
+            )
+        )
+
+    @staticmethod
+    def _prompt_for_token(repo_id: str) -> str:
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                f"Access to {repo_id} requires a Hugging Face token. Set HF_TOKEN or pass token=... explicitly."
+            )
+        token = getpass.getpass(f"Hugging Face token required for {repo_id}. Enter token: ").strip()
+        if not token:
+            raise RuntimeError(
+                f"Access to {repo_id} requires a Hugging Face token. Set HF_TOKEN or pass token=... explicitly."
+            )
+        return token
+
+    @staticmethod
+    def _resolve_num_classes(config_obj: Dict) -> int:
+        raw_value = (
+            config_obj.get("num_classes")
+            or config_obj.get("NumClasses")
+            or config_obj.get("class_count")
+            or config_obj.get("ClassCount")
+        )
+        if raw_value is None:
+            class_names = config_obj.get("class_names") or config_obj.get("ClassNames")
+            if isinstance(class_names, list) and class_names:
+                return len(class_names)
+            return DEFAULT_NUM_CLASSES
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            return DEFAULT_NUM_CLASSES
+
+    @staticmethod
+    def _resolve_class_names(config_obj: Dict, num_classes: int) -> List[str]:
+        raw_names = config_obj.get("class_names") or config_obj.get("ClassNames")
+        if not isinstance(raw_names, list):
+            return [f"class_{idx}" for idx in range(num_classes)]
+
+        class_names = [str(name).strip() for name in raw_names if str(name).strip()]
+        if len(class_names) < num_classes:
+            class_names.extend(f"class_{idx}" for idx in range(len(class_names), num_classes))
+        return class_names[:num_classes]
+
+    @staticmethod
+    def _resolve_class_colors(config_obj: Dict, num_classes: int) -> Dict[int, Tuple[int, int, int]]:
+        raw_colors = config_obj.get("class_colors") or config_obj.get("ClassColors")
+        if isinstance(raw_colors, list) and raw_colors:
+            colors: Dict[int, Tuple[int, int, int]] = {}
+            for class_id, color in enumerate(raw_colors[:num_classes]):
+                if isinstance(color, (list, tuple)):
+                    colors[class_id] = _normalize_color_triplet(color)
+            if len(colors) == num_classes:
+                return colors
+        return _build_id_to_color(num_classes)
+
+    @staticmethod
+    def _infer_num_classes_from_checkpoint(checkpoint_path: str) -> Optional[int]:
+        checkpoint_lower = checkpoint_path.lower()
+        try:
+            if checkpoint_lower.endswith(".safetensors"):
+                state_dict = load_file(checkpoint_path)
+            elif checkpoint_lower.endswith(".pt") or checkpoint_lower.endswith(".pth"):
+                raw = torch.load(checkpoint_path, map_location="cpu")
+                if isinstance(raw, dict):
+                    candidate_keys = ["state_dict", "model_state_dict", "model", "module"]
+                    resolved = None
+                    for key in candidate_keys:
+                        val = raw.get(key)
+                        if isinstance(val, dict):
+                            resolved = val
+                            break
+                    state_dict = resolved if resolved is not None else raw
+                else:
+                    return None
+            else:
+                return None
+        except Exception:
+            return None
+
+        normalized = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+        for candidate in ("class_predictor.weight", "model.class_predictor.weight"):
+            weight = normalized.get(candidate)
+            if weight is not None and hasattr(weight, "shape") and len(weight.shape) >= 1:
+                return int(weight.shape[0]) - 1
+        return None
+
     def _infer_merged_full_from_checkpoint(self, checkpoint_path: str) -> bool:
         lower = checkpoint_path.lower()
         try:
@@ -96,12 +272,15 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        base_model: str = "facebook/mask2former-swin-base-ade-semantic",
+        base_model: str = "facebook/mask2former-swin-large-ade-semantic",
         config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.remove_bg = remove_bg
+        self.use_amp = str(self.device).startswith("cuda")
+        if self.use_amp:
+            torch.backends.cudnn.benchmark = True
         if self.remove_bg:
             from anime_seg.remove_bg.bg_remover_pipeline import BgRemover
             self.bg_remover = BgRemover.from_single_file(device=self.device)
@@ -112,41 +291,44 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
             filename=filename,
             config_name=config_name,
         )
-        if not model_meta:
-            raise RuntimeError(
-                f"Failed to load model metadata from Hugging Face config '{config_name}'. "
-                "config.json must be available on the HF repo before starting inference."
-            )
 
         config_obj = model_meta.get("Config", {}) if isinstance(model_meta, dict) else {}
         if not isinstance(config_obj, dict):
             config_obj = {}
-        self.num_classes = int(config_obj.get("num_classes", DEFAULT_NUM_CLASSES))
-        merged_full = bool(config_obj.get("merged_full", False))
-        self.id_to_color = _build_id_to_color(self.num_classes)
 
-        selected_filename = filename or model_meta.get("FilePath", "")
+        selected_filename = filename or str(model_meta.get("FilePath", "") if model_meta else "")
         if not selected_filename:
             raise RuntimeError(
                 "No FilePath found in Hugging Face config.json for requested model. "
                 "Please update config.json on HF first."
             )
-        selected_base_model = model_meta.get("BaseModel", base_model)
-        self.train_image_size = int(model_meta.get("TrainImageSize", 768))
+
+        selected_base_model = str(model_meta.get("BaseModel", base_model)) if model_meta else base_model
+        self.train_image_size = int(model_meta.get("TrainImageSize", 768)) if model_meta else 768
 
         local_checkpoint_path = self._resolve_local_checkpoint_path(selected_filename)
         if local_checkpoint_path is not None:
             checkpoint_path = local_checkpoint_path
         else:
-            checkpoint_path = hf_hub_download(repo_id=repo_id, filename=selected_filename, token=token)
+            checkpoint_path = self._download_hf_file(repo_id=repo_id, filename=selected_filename, token=token)
+
+        inferred_num_classes = self._infer_num_classes_from_checkpoint(checkpoint_path)
+        config_num_classes = self._resolve_num_classes(config_obj)
+        if inferred_num_classes is not None:
+            self.num_classes = inferred_num_classes
+        else:
+            self.num_classes = config_num_classes
+        self.class_names = self._resolve_class_names(config_obj, self.num_classes)
+        self.id_to_color = self._resolve_class_colors(config_obj, self.num_classes)
+        merged_full = bool(config_obj.get("merged_full", False)) if config_obj else False
 
         inferred_merged_full = self._infer_merged_full_from_checkpoint(checkpoint_path)
         effective_merged_full = merged_full or inferred_merged_full
 
         fallback_base_models = [
             selected_base_model,
-            "facebook/mask2former-swin-base-ade-semantic",
             "facebook/mask2former-swin-large-ade-semantic",
+            "facebook/mask2former-swin-base-ade-semantic",
         ]
         unique_base_models: List[str] = []
         for candidate in fallback_base_models:
@@ -203,7 +385,7 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
         config_name: str,
     ) -> Dict:
         try:
-            config_path = hf_hub_download(repo_id=repo_id, filename=config_name, token=token)
+            config_path = self._download_hf_file(repo_id=repo_id, filename=config_name, token=token)
         except Exception:
             return {}
 
@@ -272,8 +454,12 @@ class Mask2FormerAnimeSegPipeline(PyTorchModelHubMixin):
             raise ValueError("output size must be positive")
         input_tensor = self._preprocess(img)
 
-        with torch.no_grad():
-            outputs = self.model(input_tensor)
+        with torch.inference_mode():
+            if self.use_amp:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    outputs = self.model(input_tensor)
+            else:
+                outputs = self.model(input_tensor)
             preds = torch.argmax(outputs["semantic_logits"], dim=1).cpu().numpy()[0]
 
         h, w = preds.shape

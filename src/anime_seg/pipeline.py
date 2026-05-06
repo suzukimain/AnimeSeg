@@ -45,7 +45,7 @@ class AnimeSegPipeline:
                 filename=filename,
                 token=token,
                 device=device,
-                base_model=base_model or "facebook/mask2former-swin-base-ade-semantic",
+                base_model=base_model or "facebook/mask2former-swin-large-ade-semantic",
                 config_name=config_name,
                 remove_bg=remove_bg,
             )
@@ -88,7 +88,7 @@ class AnimeSegPipeline:
         filename: str = "",
         token: Optional[str] = None,
         device: Optional[str] = None,
-        base_model: str = "facebook/mask2former-swin-base-ade-semantic",
+        base_model: str = "facebook/mask2former-swin-large-ade-semantic",
         config_name: str = "config.json",
         remove_bg: bool = False,
     ) -> Mask2FormerAnimeSegPipeline:

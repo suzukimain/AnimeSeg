@@ -83,7 +83,7 @@ def _sanitize_for_source(config_data: dict, idx: int) -> dict:
     if arch == "mask2former":
         base = str(item.get("BaseModel", ""))
         if base.startswith("models/"):
-            item["BaseModel"] = "facebook/mask2former-swin-base-ade-semantic"
+            item["BaseModel"] = "facebook/mask2former-swin-large-ade-semantic"
     return data
 
 
